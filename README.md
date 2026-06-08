@@ -1,8 +1,8 @@
-# ⚡ DELTA X — BBMA Oma Ally Crypto Signal Engine
+# ⚡ DELTA X — BBMA Crypto Signal Engine
 
 > **Python · Binance · Telegram · Supabase · Render**
 
-A fully automated spot-trading signal provider built around the **BBMA Oma Ally** strategy.
+A fully automated spot-trading signal provider built around the **BBMA** strategy.
 Monitors all valid Binance USDT pairs across M15/M30 (entry) and H1/H4/Daily (trend), detects
 Extrem → MHV entry setups, validates risk/reward, and fires real-time Telegram alerts.
 
@@ -166,4 +166,4 @@ Always manage your own risk. Past signals do not guarantee future results.
 
 ---
 
-*Built with ❤️ · BBMA Oma Ally · Delta X v1.0*
+*Built with ❤️ · BBMA by J E B A T · Delta X v1.0*
