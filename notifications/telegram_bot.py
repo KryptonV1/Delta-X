@@ -51,6 +51,27 @@ def send_to_admin(text: str) -> bool:
     """→ Admin private chat (system/errors/commands)."""
     return _send(TELEGRAM_ADMIN_ID, text)
 
+def _send_with_buttons(chat_id: str, text: str, reply_markup: dict) -> bool:
+    if not TELEGRAM_BOT_TOKEN or not chat_id:
+        return False
+    try:
+        r = requests.post(
+            f"{_BASE}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "Markdown",
+                "reply_markup": reply_markup,
+            },
+            timeout=10,
+        )
+        if r.status_code != 200:
+            log.warning(f"Telegram {chat_id}: {r.status_code} {r.text[:100]}")
+            return False
+        return True
+    except Exception as e:
+        log.error(f"Telegram send failed: {e}")
+        return False
 
 # ── Formatters ────────────────────────────────────────────────────────────────
 
@@ -104,13 +125,22 @@ def send_signal(sig) -> bool:
         f"",
         f"🕐 `{ts_str}`  •  `{sid}`",
         f"{'─'*32}",
-        f"_Delta X · BBMA Oma Ally_",
+        f"_Delta X · BBMA X_",
     ])
 
-    ok = send_to_channel(msg)
-    if ok:
-        log.info(f"✅ Signal sent: {sig.pair} {sig.direction} {sig.timeframe}")
-    return ok
+    # Build inline keyboard buttons
+    base = sig.pair.replace("USDT", "")
+    pair_underscore = f"{base}_USDT"
+    
+    reply_markup = {
+        "inline_keyboard": [[
+            {"text": "📊 Binance",      "url": f"https://www.binance.com/en/trade/{pair_underscore}"},
+            {"text": "📈 TradingView",  "url": f"https://www.tradingview.com/chart/?symbol=BINANCE:{sig.pair}"},
+            {"text": "🟢 Gate.io",      "url": f"https://www.gate.io/trade/{pair_underscore}"},
+        ]]
+    }
+
+    ok = _send_with_buttons(TELEGRAM_CHAT_ID, msg, reply_markup)
 
 
 # ── Near-entry → ADMIN ONLY ───────────────────────────────────────────────────
