@@ -1,12 +1,7 @@
-.env
-.git
-.gitignore
-__pycache__
+__pycache__/
 *.pyc
 *.pyo
-*.pyd
-.Python
+.env
 venv/
-env/
-ENV/
-.DS_Store
+.git/
+*.md
