@@ -1,0 +1,89 @@
+"""
+config/settings.py — Delta X Global Configuration
+"""
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ── Identity ────────────────────────────────────────────────────────────────
+SYSTEM_NAME    = "DELTA X"
+SYSTEM_VERSION = "1.0.0"
+BASE_CURRENCY  = "USDT"
+
+# ── Binance ─────────────────────────────────────────────────────────────────
+BINANCE_API_KEY    = os.getenv("BINANCE_API_KEY", "")
+BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
+BINANCE_BASE_URL   = "https://api.binance.com"
+
+# ── Telegram ────────────────────────────────────────────────────────────────
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID")   # client channel / group
+TELEGRAM_ADMIN_ID  = os.getenv("TELEGRAM_ADMIN_ID")   # admin private chat ID only
+
+# ── Supabase ────────────────────────────────────────────────────────────────
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+# ── Flask ───────────────────────────────────────────────────────────────────
+PORT       = int(os.getenv("PORT", 5000))
+SECRET_KEY = os.getenv("SECRET_KEY", "delta-x-secret")
+
+# ── Timeframes ──────────────────────────────────────────────────────────────
+ENTRY_TIMEFRAMES = ["15m", "30m"]
+TREND_TIMEFRAMES = ["1h", "4h", "1d"]
+ALL_TIMEFRAMES   = TREND_TIMEFRAMES + ENTRY_TIMEFRAMES
+
+BINANCE_TF_LABELS = {
+    "15m": "M15",
+    "30m": "M30",
+    "1h":  "H1",
+    "4h":  "H4",
+    "1d":  "D1",
+}
+
+# ── BBMA Indicator Settings ─────────────────────────────────────────────────
+BB_PERIOD    = 20
+BB_DEVIATION = 2
+MA5_PERIOD   = 5
+MA10_PERIOD  = 10
+MA50_PERIOD  = 50
+CANDLE_LIMIT = 120   # candles to fetch per timeframe (enough for BB + MA50)
+
+# ── Risk Management ─────────────────────────────────────────────────────────
+MAX_LOSS_PERCENT  = 20.0   # Max acceptable SL distance from entry (absolute %)
+MIN_TP1_PERCENT   = 20.0   # Min acceptable TP1 distance from entry (absolute %)
+SL_BUFFER         = 0.005  # 0.5% buffer beyond Extrem candle for SL placement
+
+# ── Scheduler intervals (seconds) ────────────────────────────────────────────
+INTERVAL_M15   = 15 * 60
+INTERVAL_M30   = 30 * 60
+INTERVAL_H1    = 60 * 60
+INTERVAL_H4    = 4 * 60 * 60
+INTERVAL_DAILY = 24 * 60 * 60
+
+BATCH_SIZE      = 20    # pairs to process per batch
+BATCH_DELAY     = 0.5   # seconds between batches (rate-limit safety)
+
+# ── Pair Filter ─────────────────────────────────────────────────────────────
+STABLECOINS = {
+    "USDT","USDC","BUSD","DAI","TUSD","USDP","FRAX","GUSD","LUSD",
+    "SUSD","UST","USTC","USDD","FDUSD","PYUSD","EURC","EURS","AGEUR",
+    "XSGD","XIDR","BIDR","BKRW","IDRT","USDJ","TRIBE","FEI","MXNT",
+    "PAX","HUSD","VAI","MUSD","OUSD","CUSD","CEUR","USDK","USDX",
+    "USDS","USDE","USD+","GHO","DOLA","MAI","BEAN","FLOAT","ESD",
+    "BEUR","AUSD","CADC","EURT","XAUT","PAXG","USDV","LISUSD",
+}
+
+WRAPPED_TOKENS = {
+    "WBTC","WETH","WBNB","WMATIC","WAVAX","WSOL","WFTM","WONE",
+    "WCELO","WKLAY","BETH","BBTC","BTCB","RENBTC","SBTC","HBTC",
+    "ABTC","TBTC","CBBTC","STBTC","WSTETH","RETH","CBETH","SFRXETH",
+    "WEETH","EZETH","RSETH","METH","WBETH","LSETH",
+}
+
+# Symbol suffix patterns to skip
+SKIP_SUFFIXES = ("UP","DOWN","BULL","BEAR","LONG","SHORT","3L","3S","5L","5S")
+
+# ── Logging ─────────────────────────────────────────────────────────────────
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

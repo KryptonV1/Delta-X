@@ -1,0 +1,13 @@
+python-binance==1.0.19
+pandas==2.2.0
+numpy==1.26.4
+pandas-ta==0.3.14b0
+python-telegram-bot==20.7
+supabase==2.4.0
+flask==3.0.2
+flask-cors==4.0.0
+python-dotenv==1.0.1
+APScheduler==3.10.4
+requests==2.31.0
+pytz==2024.1
+gunicorn==21.2.0
