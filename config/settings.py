@@ -55,6 +55,14 @@ MAX_LOSS_PERCENT  = 20.0   # Max acceptable SL distance from entry (absolute %)
 MIN_TP1_PERCENT   = 20.0   # Min acceptable TP1 distance from entry (absolute %)
 SL_BUFFER         = 0.005  # 0.5% buffer beyond Extrem candle for SL placement
 
+── Advanced Filters ─────────────────────────────────────────────────────────
+TREND_FILTER_ENABLED = True          # Filter signal lawan trend H1/H4/D1
+COOLDOWN_SECONDS = 3600              # 1 jam cooldown per pair (elak spam)
+REQUIRE_CONFIRMATION = False         # Tunggu confirmation candle (True=lebih selamat)
+MIN_BB_WIDTH_PERCENT = 0.02          # Min BB width (elak ranging market)
+CONFIRMATION_CANDLES = 2             # Bilangan candle untuk confirm trend
+NEAR_ENTRY_THRESHOLD = 0.02          # 2% threshold untuk near-entry warning
+
 # ── Scheduler intervals (seconds) ────────────────────────────────────────────
 INTERVAL_M15   = 15 * 60
 INTERVAL_M30   = 30 * 60
