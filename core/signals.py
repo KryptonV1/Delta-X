@@ -29,7 +29,7 @@ from config.settings import (
     MIN_TP1_PERCENT,
     NEAR_ENTRY_THRESHOLD,       # 0.02 → 2% proximity threshold
     TREND_FILTER_ENABLED,       # True → enforce H4 + Daily alignment
-    MIN_BB_WIDTH_PERCENT,       # 0.02 → skip ranging markets
+    MIN_BB_WIDTH_PERCENT,       # 0.15 → skip ranging markets
 )
 from utils.logger import get_logger
 
@@ -148,7 +148,7 @@ def _detect_csa(row: pd.Series, direction: str) -> tuple[bool, bool]:
     return bool(early), bool(strong)
 
 
-def _in_ma_zone_buy(row: pd.Series, tol: float = 0.015) -> bool:
+def _in_ma_zone_buy(row: pd.Series, tol: float = 0.02) -> bool:
     """
     BUY Re-Entry zone: price has pulled back to the MA5/MA10 Low band.
     Candle low touches the zone AND close does not collapse through MA10 Low.
@@ -160,7 +160,7 @@ def _in_ma_zone_buy(row: pd.Series, tol: float = 0.015) -> bool:
     return bool(touched and closed_ok)
 
 
-def _in_ma_zone_sell(row: pd.Series, tol: float = 0.015) -> bool:
+def _in_ma_zone_sell(row: pd.Series, tol: float = 0.02) -> bool:
     """
     SELL Re-Entry zone: price has pulled back to the MA5/MA10 High band.
     Candle high touches the zone AND close does not push through MA10 High.
@@ -609,6 +609,11 @@ class BBMATracker:
                         f"(H4={trend_h4}, Daily={trend_daily})"
                     )
                     return None
+
+        # ── Gate 2.5: SPOT MODE — reject SELL signals ────────────────────────
+        if getattr(settings, 'SPOT_MODE', False) and self.direction == "SELL":
+            log.debug(f"{self.pair}/{self.timeframe} SELL rejected — SPOT_MODE active")
+            return None
 
         # ── SL reference candle ──────────────────────────────────────────────
         ref_candle = (
