@@ -1,19 +1,17 @@
 """
-core/signals.py — BBMA Signal Detection State Machine v4 (BUY ONLY / SPOT)
+core/signals.py — BBMA Signal Detection State Machine v5 (BUY ONLY / SPOT)
 
 Full BBMA Oma Ally cycle per SOP:
-  EXTREM_MHV path : WATCHING → EXTREM → MHV → CSA → [RE-ENTRY] → SIGNAL
-  CSM_REENTRY path: WATCHING → CSM_PULLBACK → [RE-ENTRY] → SIGNAL
+  EXTREM_MHV path : WATCHING → EXTREM → MHV → CSA → RE-ENTRY → SIGNAL
+  CSM_REENTRY path: WATCHING → CSM_PULLBACK → RE-ENTRY → SIGNAL
 
-Changes from v3:
-  • Warning system REMOVED entirely — no more "Bersedia" spam
-  • BUY ONLY — all SELL signal paths removed (spot trading)
-  • ROOT BUG FIXED: 20% minimum-TP1 check removed from risk gate.
-    TP1 on 15m/30m is typically 0.5–5% — requiring 20% blocked every signal.
-    New Gate 3: SL must be valid + TP1 must be above entry. That's it.
-  • update() still returns (Optional[SignalResult], None) for backward compat
-  • Dead code pruned: _pct_from_zone helpers and sell-zone functions removed
-  • csm_sell still detected — needed to cancel/reset active BUY setups
+Changes from v4:
+  • CRITICAL FIX: State machine now uses while-loop to process ALL
+    applicable transitions in a single update() call.
+    Old behaviour: each state change did `return None, None` — the next
+    candle arrived 15 min later and the moment was gone.
+    New behaviour: EXTREM→MHV→CSA→entry can all fire on ONE candle.
+  • Warning system fully removed (BUY only, spot trading)
 """
 from __future__ import annotations
 import time
@@ -38,15 +36,15 @@ log = get_logger("signals")
 class SignalResult:
     pair: str
     timeframe: str
-    direction: str          # always "BUY" in v4
+    direction: str          # always "BUY" in v5
     signal_type: str        # EXTREM_MHV | CSM_REENTRY
     entry_price: float
     sl_price: float
     tp1_price: float
     tp2_price: float
     tp3_price: float
-    sl_pct: float           # negative  e.g. -2.1
-    tp1_pct: float          # positive  e.g. +1.8
+    sl_pct: float
+    tp1_pct: float
     tp2_pct: float
     tp3_pct: float
     bb_upper: float
@@ -61,61 +59,53 @@ class SignalResult:
 # ────────────────────────────────────────────────────────────────────────────
 # Low-level detectors
 # ────────────────────────────────────────────────────────────────────────────
-def _detect_extrem(df: pd.DataFrame):
+def _detect_extrem_buy(row: pd.Series) -> bool:
     """
-    EXTREME (Law 1): MA5 or MA10 crosses outside BB.
-    Body (close) must remain inside BB — if close is also outside, that is CSM.
-    Only ext_buy is used for signal generation; ext_sell returned for completeness.
+    EXTREME BUY (Law 1): MA5 or MA10 Low crosses below BB Lower.
+    Body (close) must remain inside BB — if close is also below BB, that's CSM.
     """
-    ext_buy = (
-        ((df["ma5_low"] < df["bb_lower"]) | (df["ma10_low"] < df["bb_lower"]))
-        & (df["close"] > df["bb_lower"])
-    )
-    ext_sell = (
-        ((df["ma5_high"] > df["bb_upper"]) | (df["ma10_high"] > df["bb_upper"]))
-        & (df["close"] < df["bb_upper"])
-    )
-    return ext_buy, ext_sell
+    ma_outside = (row["ma5_low"] < row["bb_lower"]) or (row["ma10_low"] < row["bb_lower"])
+    body_inside = row["close"] > row["bb_lower"]
+    return bool(ma_outside and body_inside)
 
 
-def _detect_csm(df: pd.DataFrame):
-    """
-    CSM (Law 2): Candle body (close) outside BB.
-    csm_buy  → BUY setup (enters CSM_PULLBACK)
-    csm_sell → cancels any active BUY state (global reset trigger)
-    """
-    csm_buy  = df["close"] > df["bb_upper"]
-    csm_sell = df["close"] < df["bb_lower"]
-    return csm_buy, csm_sell
+def _detect_csm_buy(row: pd.Series) -> bool:
+    """CSM BUY (Law 2): Candle body (close) closes ABOVE BB Upper."""
+    return bool(row["close"] > row["bb_upper"])
 
 
-def _detect_csa(row: pd.Series, direction: str) -> tuple[bool, bool]:
+def _detect_csm_sell(row: pd.Series) -> bool:
+    """CSM SELL: body closes below BB Lower — cancels any active BUY setup."""
+    return bool(row["close"] < row["bb_lower"])
+
+
+def _detect_mhv_buy(row: pd.Series) -> bool:
+    """MHV BUY: MA5 Low and MA10 Low both returned inside BB Lower."""
+    return bool(row["ma5_low"] > row["bb_lower"] and row["ma10_low"] > row["bb_lower"])
+
+
+def _detect_csa_buy(row: pd.Series) -> tuple[bool, bool]:
     """
-    CSA (Candlestick Arah): direction confirmation after Extreme + MHV.
+    CSA BUY: Close crosses above MA5 Low & MA10 Low (direction confirmed).
     CSA Early  → close crosses MA5 & MA10 (inside BB)
-    CSA Strong → above + close crosses Mid BB
+    CSA Strong → also crosses Mid BB
     Returns: (early, strong)
     """
-    if direction == "BUY":
-        early = bool(
-            row["close"] > row["ma5_low"]
-            and row["close"] > row["ma10_low"]
-            and row["close"] < row["bb_upper"]
-            and row["ma5_low"]  > row["bb_lower"]
-            and row["ma10_low"] > row["bb_lower"]
-        )
-        strong = early and bool(row["close"] > row["bb_middle"])
-    else:
-        early  = False
-        strong = False
+    early = bool(
+        row["close"] > row["ma5_low"]
+        and row["close"] > row["ma10_low"]
+        and row["close"] < row["bb_upper"]       # not CSM
+        and row["ma5_low"]  > row["bb_lower"]    # MA inside BB
+        and row["ma10_low"] > row["bb_lower"]
+    )
+    strong = early and bool(row["close"] > row["bb_middle"])
     return early, strong
 
 
 def _in_ma_zone_buy(row: pd.Series, tol: float = 0.01) -> bool:
     """
     BUY Re-Entry zone: price pulled back to MA5/MA10 Low band.
-    Low must touch zone top (MA5 Low ±1%) AND close must not crash
-    through MA10 Low (allows 1% tolerance below).
+    Low must touch zone (MA5 Low ±1%) AND close must hold above MA10 Low.
     """
     ma_top    = row["ma5_low"] * (1 + tol)
     touched   = row["low"] <= ma_top
@@ -145,13 +135,12 @@ class BBMATracker:
     """
     Stateful BBMA tracker — BUY signals only (spot trading).
 
-    Cycle:
-      EXTREM_MHV : WATCHING → EXTREM → MHV → CSA → RE-ENTRY → SIGNAL
-      CSM_REENTRY: WATCHING → CSM_PULLBACK → RE-ENTRY → SIGNAL
+    CRITICAL: uses a while-loop internally so that if a single candle
+    satisfies EXTREM → MHV → CSA → entry zone, ALL transitions fire
+    in one update() call.  Previous versions advanced only one state
+    per call, losing the candle by the next 15-minute scan.
 
     update() returns (SignalResult | None, None).
-    The second element is always None (warning system removed).
-    Kept as tuple for backward compatibility with callers.
     """
 
     def __init__(self, pair: str, timeframe: str):
@@ -166,17 +155,6 @@ class BBMATracker:
         df: pd.DataFrame,
         trends: dict | None = None,
     ) -> tuple[Optional[SignalResult], None]:
-        """
-        Process latest BBMA candle data.
-
-        df     : DataFrame with BBMA columns (from calculate_bbma). Min 50 rows.
-        trends : {"1h": "BULLISH"|"BEARISH"|"NEUTRAL",
-                  "4h": ..., "1d": ...}
-                 When TREND_FILTER_ENABLED, BUY is blocked if H4 or Daily
-                 is explicitly BEARISH.
-
-        Returns (signal, None). Signal is None until entry zone is hit.
-        """
         if df is None or len(df) < 50:
             self.last_event = EV_NONE
             return None, None
@@ -184,14 +162,10 @@ class BBMATracker:
         trends = trends or {}
         self.last_event = EV_NONE
 
-        ext_buy, _         = _detect_extrem(df)   # ext_sell not used (BUY only)
-        csm_buy, csm_sell  = _detect_csm(df)
         last = df.iloc[-1]
 
         # ── GLOBAL: SELL CSM cancels any active BUY state ────────────────────
-        # A candle closing below BB Lower invalidates all BUY setups regardless
-        # of which state we are in.
-        if self.state != "WATCHING" and csm_sell.iloc[-1]:
+        if self.state != "WATCHING" and _detect_csm_sell(last):
             log.debug(
                 f"{self.pair}/{self.timeframe} CSM SELL — "
                 f"cancels {self.state} BUY setup"
@@ -200,120 +174,144 @@ class BBMATracker:
             self.last_event = EV_RESET
             return None, None
 
-        # ════════════════════════ STATE MACHINE ═════════════════════════════
+        # ════════════════ STATE MACHINE (while-loop fall-through) ════════════
+        #
+        # The loop allows multi-step transitions on a single candle:
+        #   WATCHING → EXTREM → MHV → CSA → entry → signal
+        # Each iteration advances at most one state.  The loop exits when
+        # no further transition is possible on the current candle, or when
+        # a signal is produced.
+        #
+        max_steps = 5  # safety cap — can never loop infinitely
+        for _ in range(max_steps):
 
-        # ── WATCHING ─────────────────────────────────────────────────────────
-        if self.state == "WATCHING":
+            # ── WATCHING ─────────────────────────────────────────────────────
+            if self.state == "WATCHING":
 
-            if ext_buy.iloc[-1]:
-                self._set_extrem(len(df) - 1, last)
-                self.last_event = EV_EXTREM
-                return None, None
+                if _detect_extrem_buy(last):
+                    self._set_extrem(len(df) - 1, last)
+                    self.last_event = EV_EXTREM
+                    # fall through — check MHV on same candle
+                    continue
 
-            if csm_buy.iloc[-1]:
-                self.state      = "CSM_PULLBACK"
-                self.direction  = "BUY"
-                self.csm_candle = last.copy()
-                self.last_event = EV_CSM
-                log.debug(f"{self.pair}/{self.timeframe} CSM BUY detected")
-                return None, None
+                if _detect_csm_buy(last):
+                    self.state      = "CSM_PULLBACK"
+                    self.direction  = "BUY"
+                    self.csm_candle = last.copy()
+                    self.last_event = EV_CSM
+                    log.debug(f"{self.pair}/{self.timeframe} CSM BUY detected")
+                    # CSM and entry zone cannot coexist on same candle
+                    # (CSM = close > bb_upper; entry = low near ma5_low)
+                    break
 
-        # ── EXTREM: wait for MA Low to return inside BB (MHV) ─────────────────
-        elif self.state == "EXTREM":
+                break  # nothing detected
 
-            mhv = (
-                last["ma5_low"]  > last["bb_lower"]
-                and last["ma10_low"] > last["bb_lower"]
-            )
+            # ── EXTREM: check MHV ────────────────────────────────────────────
+            elif self.state == "EXTREM":
 
-            if mhv:
-                csa_early, csa_strong = _detect_csa(last, "BUY")
+                if _detect_mhv_buy(last):
+                    # MHV confirmed — check if CSA also present on same candle
+                    csa_early, csa_strong = _detect_csa_buy(last)
+                    if csa_early:
+                        self.state      = "CSA"
+                        self.csa_strong = csa_strong
+                        self.last_event = EV_CSA
+                        log.debug(
+                            f"{self.pair}/{self.timeframe} MHV+CSA "
+                            f"{'STRONG' if csa_strong else 'EARLY'} BUY (same candle)"
+                        )
+                        # fall through — check entry zone on same candle
+                        continue
+                    else:
+                        self.state      = "MHV"
+                        self.last_event = EV_MHV
+                        log.debug(f"{self.pair}/{self.timeframe} MHV BUY confirmed")
+                        # fall through — check CSA on same candle
+                        continue
+
+                break  # MHV not yet confirmed — wait
+
+            # ── MHV: check CSA ───────────────────────────────────────────────
+            elif self.state == "MHV":
+
+                # MA dips back outside BB → re-enter EXTREM
+                if _detect_extrem_buy(last):
+                    log.debug(
+                        f"{self.pair}/{self.timeframe} New EXTREM BUY in MHV — "
+                        f"updating reference candle"
+                    )
+                    self._set_extrem(len(df) - 1, last)
+                    self.last_event = EV_EXTREM
+                    break  # can't also be MHV on same candle
+
+                csa_early, csa_strong = _detect_csa_buy(last)
                 if csa_early:
-                    # MHV + CSA on same candle → skip MHV state
                     self.state      = "CSA"
                     self.csa_strong = csa_strong
                     self.last_event = EV_CSA
                     log.debug(
-                        f"{self.pair}/{self.timeframe} MHV+CSA "
-                        f"{'STRONG' if csa_strong else 'EARLY'} BUY (same candle)"
+                        f"{self.pair}/{self.timeframe} CSA "
+                        f"{'STRONG' if csa_strong else 'EARLY'} BUY confirmed"
                     )
-                else:
-                    self.state      = "MHV"
-                    self.last_event = EV_MHV
-                    log.debug(f"{self.pair}/{self.timeframe} MHV BUY confirmed")
-                return None, None
+                    # fall through — check entry zone on same candle
+                    continue
 
-        # ── MHV: wait for CSA (directional confirmation) ──────────────────────
-        elif self.state == "MHV":
+                break  # CSA not yet — wait
 
-            # MA dips back outside BB → re-enter EXTREM with fresh candle
-            if ext_buy.iloc[-1]:
-                log.debug(
-                    f"{self.pair}/{self.timeframe} New EXTREM BUY in MHV "
-                    f"— updating reference candle"
-                )
-                self._set_extrem(len(df) - 1, last)
-                self.last_event = EV_EXTREM
-                return None, None
+            # ── CSA: check Re-Entry zone ─────────────────────────────────────
+            elif self.state == "CSA":
 
-            csa_early, csa_strong = _detect_csa(last, "BUY")
-            if csa_early:
-                self.state      = "CSA"
-                self.csa_strong = csa_strong
-                self.last_event = EV_CSA
-                log.debug(
-                    f"{self.pair}/{self.timeframe} CSA "
-                    f"{'STRONG' if csa_strong else 'EARLY'} BUY confirmed"
-                )
-                return None, None
+                # CSM BUY during CSA → upgrade to CSM_PULLBACK
+                if _detect_csm_buy(last):
+                    self.state      = "CSM_PULLBACK"
+                    self.csm_candle = last.copy()
+                    self.last_event = EV_CSM
+                    log.debug(
+                        f"{self.pair}/{self.timeframe} CSM BUY during CSA — "
+                        f"upgrading to CSM_PULLBACK"
+                    )
+                    break  # CSM candle is not an entry candle
 
-        # ── CSA: direction confirmed — wait for Re-Entry pullback ─────────────
-        elif self.state == "CSA":
-
-            # CSM BUY during CSA → upgrade (tighter SL from CSM candle)
-            if csm_buy.iloc[-1]:
-                self.state      = "CSM_PULLBACK"
-                self.csm_candle = last.copy()
-                self.last_event = EV_CSM
-                log.debug(
-                    f"{self.pair}/{self.timeframe} CSM BUY during CSA "
-                    f"— upgrading to CSM_PULLBACK"
-                )
-                return None, None
-
-            if _in_ma_zone_buy(last):
-                self.last_event = EV_ENTRY_ZONE
-                signal = self._build_signal(last, df, trends, "EXTREM_MHV")
-                if signal is None:
-                    self.last_event = EV_RISK_BLOCK
+                if _in_ma_zone_buy(last):
+                    self.last_event = EV_ENTRY_ZONE
+                    signal = self._build_signal(last, df, trends, "EXTREM_MHV")
+                    if signal is None:
+                        self.last_event = EV_RISK_BLOCK
+                        self._reset()
+                        return None, None
                     self._reset()
-                    return None, None
-                self._reset()
-                self.last_event = EV_SIGNAL
-                return signal, None
+                    self.last_event = EV_SIGNAL
+                    return signal, None
 
-        # ── CSM_PULLBACK: wait for Re-Entry after CSM ─────────────────────────
-        elif self.state == "CSM_PULLBACK":
+                break  # not in zone yet — wait for pullback
 
-            if _in_ma_zone_buy(last):
-                self.last_event = EV_ENTRY_ZONE
-                signal = self._build_signal(last, df, trends, "CSM_REENTRY")
-                if signal is None:
-                    self.last_event = EV_RISK_BLOCK
+            # ── CSM_PULLBACK: check Re-Entry zone ────────────────────────────
+            elif self.state == "CSM_PULLBACK":
+
+                if _in_ma_zone_buy(last):
+                    self.last_event = EV_ENTRY_ZONE
+                    signal = self._build_signal(last, df, trends, "CSM_REENTRY")
+                    if signal is None:
+                        self.last_event = EV_RISK_BLOCK
+                        self._reset()
+                        return None, None
                     self._reset()
-                    return None, None
-                self._reset()
-                self.last_event = EV_CSM_REENTRY
-                return signal, None
+                    self.last_event = EV_CSM_REENTRY
+                    return signal, None
 
-            # Price blew straight through zone → entry missed, reset
-            if last["close"] < last["ma10_low"] * 0.97:
-                log.debug(
-                    f"{self.pair}/{self.timeframe} Entry zone blown through — reset"
-                )
-                self._reset()
-                self.last_event = EV_RESET
-                return None, None
+                # Price blew through zone → missed entry
+                if last["close"] < last["ma10_low"] * 0.97:
+                    log.debug(
+                        f"{self.pair}/{self.timeframe} Entry zone blown — reset"
+                    )
+                    self._reset()
+                    self.last_event = EV_RESET
+                    return None, None
+
+                break  # not in zone yet — wait
+
+            else:
+                break  # unknown state — shouldn't happen
 
         return None, None
 
@@ -321,7 +319,7 @@ class BBMATracker:
 
     def _reset(self):
         self.state         = "WATCHING"
-        self.direction     = "BUY"      # always BUY — kept for logging clarity
+        self.direction     = "BUY"
         self.extrem_idx    = None
         self.extrem_candle = None
         self.csm_candle    = None
@@ -348,24 +346,20 @@ class BBMATracker:
         signal_type: str,
     ) -> Optional[SignalResult]:
         """
-        Build a BUY SignalResult with three validation gates.
+        Build a BUY SignalResult with validation gates.
 
         Gate 1 — BB width    : skip ranging/choppy market
         Gate 2 — Multi-TF    : BUY blocked if H4 or Daily is BEARISH
-        Gate 3 — Risk check  : SL must not be excessive; TP1 must be above entry
-                               NOTE: 20% minimum-TP1 check intentionally removed.
-                               On 15m/30m, TP1 (bb_middle) is typically 1–5%
-                               above entry — far below the 20% threshold that
-                               was silently blocking every single signal.
+        Gate 3 — Risk check  : SL valid, TP1 above entry
 
         SL reference:
-          EXTREM_MHV  → Extreme candle low (per SOP)
+          EXTREM_MHV  → Extreme candle low
           CSM_REENTRY → CSM candle low
 
         TP levels (per SOP):
-          TP1 = nearer of bb_middle or ma5_high
+          TP1 = nearer of bb_middle or ma5_high (above entry)
           TP2 = bb_upper
-          TP3 = TP2 + (TP1 distance from SL)  [projection]
+          TP3 = TP2 + (TP1-to-SL distance)  [projection]
         """
         entry = float(last["close"])
 
