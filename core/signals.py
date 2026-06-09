@@ -31,6 +31,7 @@ from config.settings import (
     TREND_FILTER_ENABLED,       # True → enforce H4 + Daily alignment
     MIN_BB_WIDTH_PERCENT,       # 0.15 → skip ranging markets
 )
+from config import settings  # <-- LETAK SINI
 from utils.logger import get_logger
 
 log = get_logger("signals")
