@@ -91,3 +91,46 @@ def get_trend_direction(df: pd.DataFrame) -> str:
     if bear_count >= 2:
         return "BEARISH"
     return "NEUTRAL"
+
+    def is_trending_market(df: pd.DataFrame, min_width: float = 0.02) -> bool:
+        """
+        Check if BB width indicates trending market (bukan sideways).
+        Returns True jika BB width > min_width dan melebar berbanding purata.
+        """
+        if len(df) < 20:
+            return False
+    
+        current_width = df["bb_width"].iloc[-1]
+        avg_width = df["bb_width"].rolling(20).mean().iloc[-1]
+    
+        # Trending jika BB width > 80% dari purata DAN melebihi min threshold
+        return current_width > avg_width * 0.8 and current_width > min_width
+
+    def has_confirmation_candle(df: pd.DataFrame, direction: str, num_candles: int = 2) -> bool:
+        """
+        Check untuk confirmation candle selepas harga sentuh MA zone.
+        BUY: Close > MA5 Low dan close menaik berturut-turut
+        SELL: Close < MA5 High dan close menurun berturut-turut
+        """
+        if len(df) < num_candles + 1:
+            return False
+    
+        recent = df.iloc[-(num_candles+1):]
+    
+        if direction == "BUY":
+            # Semua candle recent mesti close > MA5 Low dan close menaik
+            ma5_ok = all(r["close"] > r["ma5_low"] for _, r in recent.iterrows())
+            close_rising = all(
+                recent.iloc[i]["close"] < recent.iloc[i+1]["close"]
+                for i in range(len(recent)-1)
+            )
+            return ma5_ok and close_rising
+    else:  # SELL
+        # Semua candle recent mesti close < MA5 High dan close menurun
+        ma5_ok = all(r["close"] < r["ma5_high"] for _, r in recent.iterrows())
+        close_falling = all(
+            recent.iloc[i]["close"] > recent.iloc[i+1]["close"]
+            for i in range(len(recent)-1)
+        )
+        return ma5_ok and close_falling
+
