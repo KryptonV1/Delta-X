@@ -516,12 +516,8 @@ class BBMATracker:
         )
 
     def _check_near_entry(self, last: pd.Series) -> Optional[NearEntryWarning]:
-        """
-        Return NearEntryWarning if price is within NEAR_ENTRY_THRESHOLD
-        of the entry zone and a warning hasn't been sent yet for this setup.
-        """
-        if self.near_warned:
-            return None
+        """DISABLED: Near-entry warning removed to avoid conflict with actual signals."""
+        return None
 
         if self.direction == "BUY":
             pct      = _pct_from_zone_buy(last)
