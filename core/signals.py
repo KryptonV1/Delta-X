@@ -126,6 +126,7 @@ EV_RISK_BLOCK  = "risk_blocked"
 EV_SIGNAL      = "signal"
 EV_CSM_REENTRY = "csm_reentry"
 EV_RESET       = "reset"
+EV_NEAR_ENTRY  = "near_entry"
 
 
 # ────────────────────────────────────────────────────────────────────────────
