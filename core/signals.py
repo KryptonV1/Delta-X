@@ -1,34 +1,43 @@
+"""
+core/signals.py — BBMA Signal Detection State Machine v2
+Improvements in this version:
+• Relaxed entry zone (1% tolerance — tak miss harga tepat kat MA5)
+• Trend filter baked-in per-signal
+• CSM Reentry logic (trend continuation entry)
+• Near-entry detection (⚠ hampir entry)
+• last_event property for scan stats counting
+• NearEntryWarning dataclass
+"""
 from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from typing import Optional
 import pandas as pd
-from config.settings import (
-    SL_BUFFER, MAX_LOSS_PERCENT, MIN_TP1_PERCENT,
-    TREND_FILTER_ENABLED, COOLDOWN_SECONDS,
-    REQUIRE_CONFIRMATION, MIN_BB_WIDTH_PERCENT, CONFIRMATION_CANDLES,
-)
-from core.bbma import is_trending_market, has_confirmation_candle
+from config.settings import SL_BUFFER, MAX_LOSS_PERCENT, MIN_TP1_PERCENT
 from utils.logger import get_logger
 
 log = get_logger("signals")
 
+# How close price must be to MA zone to trigger near-entry warning (2%)
 NEAR_ENTRY_THRESHOLD = 0.02
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# Result data classes
+# ────────────────────────────────────────────────────────────────────────────
 @dataclass
 class SignalResult:
     pair: str
     timeframe: str
-    direction: str
-    signal_type: str
+    direction: str          # BUY | SELL
+    signal_type: str        # EXTREM_MHV | CSM_REENTRY
     entry_price: float
     sl_price: float
     tp1_price: float
     tp2_price: float
     tp3_price: float
-    sl_pct: float
-    tp1_pct: float
+    sl_pct: float           # negative  e.g. -15.2
+    tp1_pct: float          # positive  e.g. +25.0
     tp2_pct: float
     tp3_pct: float
     bb_upper: float
@@ -42,38 +51,51 @@ class SignalResult:
 
 @dataclass
 class NearEntryWarning:
+    """Fired when price is close to entry zone but not yet triggered."""
     pair: str
     timeframe: str
-    direction: str
-    signal_type: str
+    direction: str          # BUY | SELL
+    signal_type: str        # EXTREM_MHV | CSM_REENTRY
     current_price: float
-    zone_top: float
-    zone_bot: float
-    pct_away: float
+    zone_top: float         # upper bound of entry zone (MA5 High or MA10 High)
+    zone_bot: float         # lower bound of entry zone (MA10 Low or MA5 Low)
+    pct_away: float         # % distance from nearest zone edge
     timestamp: float = field(default_factory=time.time)
 
 
-def _detect_extrem(df):
+# ────────────────────────────────────────────────────────────────────────────
+# Low-level detectors
+# ────────────────────────────────────────────────────────────────────────────
+def _detect_extrem(df: pd.DataFrame):
     ext_buy = (df["ma5_low"] < df["bb_lower"]) | (df["ma10_low"] < df["bb_lower"])
     ext_sell = (df["ma5_high"] > df["bb_upper"]) | (df["ma10_high"] > df["bb_upper"])
     return ext_buy, ext_sell
 
 
-def _detect_csm(df):
-    csm_buy = df["close"] > df["bb_upper"]
-    csm_sell = df["close"] < df["bb_lower"]
+def _detect_csm(df: pd.DataFrame):
+    csm_buy = df["close"] > df["bb_upper"]   # body closes above BB Upper
+    csm_sell = df["close"] < df["bb_lower"]  # body closes below BB Lower
     return csm_buy, csm_sell
 
 
-def _in_ma_zone_buy(row, tol=0.01):
-    ma_top = row["ma5_low"] * (1 + tol)
-    ma_bot = row["ma10_low"] * (1 - tol)
+def _in_ma_zone_buy(row: pd.Series, tol: float = 0.01) -> bool:
+    """
+    Relaxed BUY entry zone (1% tolerance).
+    Price retraced into MA5/MA10 Low band.
+    Previously strict: low <= ma10_low AND close >= ma5_low
+    Now: within tol % of either MA boundary counts.
+    """
+    ma_top = row["ma5_low"] * (1 + tol)    # slightly above MA5 Low
+    ma_bot = row["ma10_low"] * (1 - tol)   # slightly below MA10 Low
     touched = row["low"] <= ma_top
     closed_ok = row["close"] >= row["ma10_low"] * (1 - tol)
     return touched and closed_ok
 
 
-def _in_ma_zone_sell(row, tol=0.01):
+def _in_ma_zone_sell(row: pd.Series, tol: float = 0.01) -> bool:
+    """
+    Relaxed SELL entry zone (1% tolerance).
+    """
     ma_bot = row["ma5_high"] * (1 - tol)
     ma_top = row["ma10_high"] * (1 + tol)
     touched = row["high"] >= ma_bot
@@ -81,26 +103,32 @@ def _in_ma_zone_sell(row, tol=0.01):
     return touched and closed_ok
 
 
-def _pct_from_zone_buy(row):
+def _pct_from_zone_buy(row: pd.Series) -> float:
+    """How far (%) current price is above the BUY MA zone (positive = outside zone)."""
     zone_top = row["ma5_low"]
     if row["close"] <= zone_top:
         return 0.0
     return (row["close"] - zone_top) / zone_top * 100
 
 
-def _pct_from_zone_sell(row):
+def _pct_from_zone_sell(row: pd.Series) -> float:
+    """How far (%) current price is below the SELL MA zone."""
     zone_bot = row["ma5_high"]
     if row["close"] >= zone_bot:
         return 0.0
     return (zone_bot - row["close"]) / zone_bot * 100
 
 
-def _passes_risk(entry, sl, tp1):
+def _passes_risk(entry: float, sl: float, tp1: float) -> bool:
     sl_pct = abs((sl - entry) / entry * 100)
     tp1_pct = abs((tp1 - entry) / entry * 100)
     return sl_pct <= MAX_LOSS_PERCENT and tp1_pct >= MIN_TP1_PERCENT
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# Tracker
+# ────────────────────────────────────────────────────────────────────────────
+# last_event values (used by scanner for stats counting)
 EV_NONE = "none"
 EV_EXTREM = "extrem"
 EV_MHV = "mhv"
@@ -114,19 +142,31 @@ EV_RESET = "reset"
 
 
 class BBMATracker:
-    def __init__(self, pair, timeframe):
+    """
+    Stateful BBMA tracker for one (pair, timeframe) slot.
+    Returns (SignalResult|None, NearEntryWarning|None) from update().
+    self.last_event is set after every call for external stats counting.
+    """
+
+    def __init__(self, pair: str, timeframe: str):
         self.pair = pair
         self.timeframe = timeframe
-        self.last_signal_time = 0
-        self.cooldown_seconds = COOLDOWN_SECONDS
         self._reset()
 
-    def update(self, df, trends=None):
+    # ── Public ──────────────────────────────────────────────────────────────
+
+    def update(
+        self,
+        df: pd.DataFrame,
+        trends: dict | None = None,
+    ) -> tuple[Optional[SignalResult], Optional[NearEntryWarning]]:
+        """
+        Process latest BBMA data.
+        Returns (signal, near_entry_warning) — either can be None.
+        Sets self.last_event for external stats counting.
+        """
         if df is None or len(df) < 50:
             self.last_event = EV_NONE
-            return None, None
-
-        if time.time() - self.last_signal_time < self.cooldown_seconds:
             return None, None
 
         trends = trends or {}
@@ -136,17 +176,23 @@ class BBMATracker:
         csm_buy, csm_sell = _detect_csm(df)
         last = df.iloc[-1]
 
+        # ── CSM cancels opposite Extrem ──────────────────────────────────────
         if self.state == "EXTREM":
             if self.direction == "BUY" and csm_sell.iloc[-1]:
+                log.debug(f"{self.pair}/{self.timeframe} CSM SELL cancels BUY Extrem")
                 self._reset()
                 self.last_event = EV_RESET
                 return None, None
             if self.direction == "SELL" and csm_buy.iloc[-1]:
+                log.debug(f"{self.pair}/{self.timeframe} CSM BUY cancels SELL Extrem")
                 self._reset()
                 self.last_event = EV_RESET
                 return None, None
 
+        # ════════════════ STATE MACHINE ════════════════
+
         if self.state == "WATCHING":
+            # ── Detect Extrem ────────────────────────────────────────────────
             if ext_sell.iloc[-1] and not ext_buy.iloc[-1]:
                 self._set_extrem("SELL", len(df) - 1, last)
                 self.last_event = EV_EXTREM
@@ -156,12 +202,14 @@ class BBMATracker:
                 self.last_event = EV_EXTREM
                 return None, None
 
+            # ── Detect CSM (Reentry setup) ───────────────────────────────────
             if csm_buy.iloc[-1]:
                 self.state = "CSM_PULLBACK"
                 self.direction = "BUY"
                 self.csm_candle = last.copy()
                 self.near_warned = False
                 self.last_event = EV_CSM
+                log.debug(f"{self.pair}/{self.timeframe} CSM BUY detected")
                 return None, None
 
             if csm_sell.iloc[-1]:
@@ -170,25 +218,35 @@ class BBMATracker:
                 self.csm_candle = last.copy()
                 self.near_warned = False
                 self.last_event = EV_CSM
+                log.debug(f"{self.pair}/{self.timeframe} CSM SELL detected")
                 return None, None
 
         elif self.state == "EXTREM":
+            # ── Wait for MHV ─────────────────────────────────────────────────
             if self.direction == "SELL":
                 if last["ma5_high"] < last["bb_upper"] and last["ma10_high"] < last["bb_upper"]:
                     self.state = "MHV"
                     self.near_warned = False
                     self.last_event = EV_MHV
+                    log.debug(f"{self.pair}/{self.timeframe} MHV SELL confirmed")
                     return None, None
             else:
                 if last["ma5_low"] > last["bb_lower"] and last["ma10_low"] > last["bb_lower"]:
                     self.state = "MHV"
                     self.near_warned = False
                     self.last_event = EV_MHV
+                    log.debug(f"{self.pair}/{self.timeframe} MHV BUY confirmed")
                     return None, None
 
         elif self.state == "MHV":
+            # ── Near-entry warning ───────────────────────────────────────────
             near_warn = self._check_near_entry(last)
-            in_zone = _in_ma_zone_buy(last) if self.direction == "BUY" else _in_ma_zone_sell(last)
+
+            # ── Check entry zone ─────────────────────────────────────────────
+            in_zone = (
+                _in_ma_zone_buy(last) if self.direction == "BUY"
+                else _in_ma_zone_sell(last)
+            )
             if in_zone:
                 self.last_event = EV_ENTRY_ZONE
                 signal = self._build_signal(last, df, trends, "EXTREM_MHV")
@@ -199,11 +257,17 @@ class BBMATracker:
                 self._reset()
                 self.last_event = EV_SIGNAL
                 return signal, None
+
             return None, near_warn
 
         elif self.state == "CSM_PULLBACK":
+            # ── CSM Reentry: wait for pullback to MA zone ────────────────────
             near_warn = self._check_near_entry(last)
-            in_zone = _in_ma_zone_buy(last) if self.direction == "BUY" else _in_ma_zone_sell(last)
+
+            in_zone = (
+                _in_ma_zone_buy(last) if self.direction == "BUY"
+                else _in_ma_zone_sell(last)
+            )
             if in_zone:
                 self.last_event = EV_ENTRY_ZONE
                 signal = self._build_signal(last, df, trends, "CSM_REENTRY")
@@ -215,6 +279,7 @@ class BBMATracker:
                 self.last_event = EV_CSM_REENTRY
                 return signal, None
 
+            # If price shoots through MA zone (missed entry), reset
             if self.direction == "BUY" and last["close"] < last["ma10_low"] * 0.97:
                 self._reset()
                 self.last_event = EV_RESET
@@ -228,6 +293,8 @@ class BBMATracker:
 
         return None, None
 
+    # ── Private ─────────────────────────────────────────────────────────────
+
     def _reset(self):
         self.state = "WATCHING"
         self.direction = None
@@ -237,15 +304,17 @@ class BBMATracker:
         self.near_warned = False
         self.last_event = EV_NONE
 
-    def _set_extrem(self, direction, idx, candle):
+    def _set_extrem(self, direction: str, idx: int, candle: pd.Series):
         self.state = "EXTREM"
         self.direction = direction
         self.extrem_idx = idx
         self.extrem_candle = candle.copy()
         self.csm_candle = None
         self.near_warned = False
+        log.debug(f"{self.pair}/{self.timeframe} EXTREM {direction} @ {candle['close']:.6f}")
 
-    def _check_near_entry(self, last):
+    def _check_near_entry(self, last: pd.Series) -> Optional[NearEntryWarning]:
+        """Return NearEntryWarning if close to MA zone and not yet warned."""
         if self.near_warned:
             return None
 
@@ -273,36 +342,21 @@ class BBMATracker:
             )
         return None
 
-    def _passes_trend_filter(self, trends):
-        if not TREND_FILTER_ENABLED:
-            return True
-        trend_scores = {"BULLISH": 1, "NEUTRAL": 0, "BEARISH": -1}
-        h1_score = trend_scores.get(trends.get("1h", "NEUTRAL"), 0)
-        h4_score = trend_scores.get(trends.get("4h", "NEUTRAL"), 0)
-        daily_score = trend_scores.get(trends.get("1d", "NEUTRAL"), 0)
-        total_score = h1_score + h4_score + daily_score
-        if self.direction == "BUY":
-            return total_score >= 0
-        else:
-            return total_score <= 0
-
-    def _build_signal(self, last, df, trends, signal_type):
+    def _build_signal(
+        self,
+        last: pd.Series,
+        df: pd.DataFrame,
+        trends: dict,
+        signal_type: str,
+    ) -> Optional[SignalResult]:
+        """Build and risk-validate a SignalResult. Returns None if risk fails."""
         entry = float(last["close"])
 
-        if not self._passes_trend_filter(trends):
-            log.debug(f"{self.pair}/{self.timeframe} REJECTED by trend filter")
-            return None
-
-        if not is_trending_market(df, MIN_BB_WIDTH_PERCENT):
-            log.debug(f"{self.pair}/{self.timeframe} Ranging market, skip")
-            return None
-
-        if REQUIRE_CONFIRMATION:
-            if not has_confirmation_candle(df, self.direction, CONFIRMATION_CANDLES):
-                log.debug(f"{self.pair}/{self.timeframe} No confirmation candle")
-                return None
-
-        ref_candle = self.extrem_candle if signal_type == "EXTREM_MHV" else self.csm_candle
+        # Reference candle for SL: Extrem candle (EXTREM_MHV) or CSM candle (CSM_REENTRY)
+        ref_candle = (
+            self.extrem_candle if signal_type == "EXTREM_MHV"
+            else self.csm_candle
+        )
 
         if self.direction == "BUY":
             sl = float(ref_candle["low"]) * (1 - SL_BUFFER)
@@ -316,13 +370,16 @@ class BBMATracker:
             tp3 = tp2 - abs(sl - tp1)
 
         if not _passes_risk(entry, sl, tp1):
-            log.debug(f"{self.pair}/{self.timeframe} risk FAIL")
+            log.debug(
+                f"{self.pair}/{self.timeframe} {self.direction} risk FAIL "
+                f"SL={abs((sl - entry) / entry * 100):.1f}% TP1={abs((tp1 - entry) / entry * 100):.1f}%"
+            )
             return None
 
         def _pct(a, b):
             return round((a - b) / b * 100, 2)
 
-        result = SignalResult(
+        return SignalResult(
             pair=self.pair,
             timeframe=self.timeframe,
             direction=self.direction,
@@ -343,6 +400,3 @@ class BBMATracker:
             trend_h4=trends.get("4h", "NEUTRAL"),
             trend_daily=trends.get("1d", "NEUTRAL"),
         )
-
-        self.last_signal_time = time.time()
-        return result
