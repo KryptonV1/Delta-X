@@ -1,11 +1,12 @@
 """
-notifications/telegram_bot.py — Delta X Telegram v4
+notifications/telegram_bot.py — Delta X Telegram v5
+
+SPOT TRADING ONLY — BUY signals sahaja.
+SELL signals di-block automatik.
 
 Destinations:
-  TELEGRAM_CHAT_ID  → client channel (signals + TP/SL updates)
-  TELEGRAM_ADMIN_ID → admin private   (system, near-entry)
-
-TP/SL updates REPLY to original signal message.
+  TELEGRAM_CHAT_ID  → client channel (signals, sniper entry, TP/SL updates)
+  TELEGRAM_ADMIN_ID → admin private   (system, errors)
 """
 import hashlib
 from datetime import datetime, timezone
@@ -48,10 +49,21 @@ def _duration_str(seconds: float) -> str:
     return f"{m}m"
 
 
+def _inline_buttons(pair: str) -> dict:
+    base = pair.replace("USDT", "")
+    pair_us = f"{base}_USDT"
+    return {
+        "inline_keyboard": [[
+            {"text": "📊 Binance",     "url": f"https://www.binance.com/en/trade/{pair_us}"},
+            {"text": "📈 TradingView", "url": f"https://www.tradingview.com/chart/?symbol=BINANCE:{pair}"},
+            {"text": "🟢 Gate.io",     "url": f"https://www.gate.io/trade/{pair_us}"},
+        ]]
+    }
+
+
 # ── Core send ────────────────────────────────────────────────────────────────
 
 def _send(chat_id: str, text: str, reply_to: int = None, reply_markup: dict = None) -> tuple[bool, int]:
-    """Send message. Returns (success, message_id)."""
     if not TELEGRAM_BOT_TOKEN or not chat_id:
         return False, 0
     payload = {
@@ -84,30 +96,28 @@ def send_to_admin(text: str) -> bool:
     return ok
 
 
-# ── Signal → CLIENT CHANNEL (returns message_id for reply tracking) ──────────
+# ── Signal → CLIENT CHANNEL (BUY only) ───────────────────────────────────────
 
 def send_signal(sig) -> tuple[bool, int]:
-    """Send signal to client channel. Returns (success, telegram_message_id)."""
-    arrow = "📈" if sig.direction == "BUY" else "📉"
-    badge = "🟩 BUY"  if sig.direction == "BUY" else "🟥 SELL"
+    # ── SPOT ONLY: Block SELL ──
+    if sig.direction != "BUY":
+        log.debug(f"Blocked SELL signal: {sig.pair} (spot trading only)")
+        return False, 0
+
     ts_str = datetime.fromtimestamp(sig.timestamp, tz=timezone.utc).strftime("%d %b %Y  %H:%M UTC")
     sid    = _sid(sig.pair, sig.timeframe, sig.direction, sig.timestamp)
 
     trends = [sig.trend_daily, sig.trend_h4, sig.trend_h1]
     bull_c = trends.count("BULLISH")
-    bear_c = trends.count("BEARISH")
-    if sig.direction == "BUY":
-        align = "✅ SELARAS" if bull_c >= 2 else ("⚠️ SEPARA" if bull_c >= 1 else "❌ LAWAN")
-    else:
-        align = "✅ SELARAS" if bear_c >= 2 else ("⚠️ SEPARA" if bear_c >= 1 else "❌ LAWAN")
+    align  = "✅ SELARAS" if bull_c >= 2 else ("⚠️ SEPARA" if bull_c >= 1 else "❌ LAWAN")
 
     msg = "\n".join([
         f"{'─'*30}",
         f"⚡ *{SYSTEM_NAME} — SIGNAL*",
         f"{'─'*30}",
         f"",
-        f"{arrow} *{sig.pair}*  `{sig.timeframe}`  `{sig.signal_type}`",
-        f"{badge}",
+        f"📈 *{sig.pair}*  `{sig.timeframe}`  `{sig.signal_type}`",
+        f"🟩 BUY",
         f"",
         f"💰 *Entry :* `{_fmt(sig.entry_price)}`",
         f"🎯 *TP1   :* `{_fmt(sig.tp1_price)}`  *(+{sig.tp1_pct:.1f}%)*",
@@ -124,56 +134,70 @@ def send_signal(sig) -> tuple[bool, int]:
         f"{'─'*30}",
     ])
 
-    base = sig.pair.replace("USDT", "")
-    pair_us = f"{base}_USDT"
-    reply_markup = {
-        "inline_keyboard": [[
-            {"text": "📊 Binance",     "url": f"https://www.binance.com/en/trade/{pair_us}"},
-            {"text": "📈 TradingView", "url": f"https://www.tradingview.com/chart/?symbol=BINANCE:{sig.pair}"},
-            {"text": "🟢 Gate.io",     "url": f"https://www.gate.io/trade/{pair_us}"},
-        ]]
-    }
-
-    ok, msg_id = send_to_channel(msg, reply_markup=reply_markup)
+    ok, msg_id = send_to_channel(msg, reply_markup=_inline_buttons(sig.pair))
     if ok:
-        log.info(f"✅ Signal sent: {sig.pair} {sig.direction} {sig.timeframe} (msg_id={msg_id})")
+        log.info(f"✅ Signal: {sig.pair} BUY {sig.timeframe} (msg_id={msg_id})")
     return ok, msg_id
+
+
+# ── Sniper Entry → CLIENT CHANNEL (BUY only) ─────────────────────────────────
+
+def send_near_entry(warn) -> bool:
+    # ── SPOT ONLY: Block SELL ──
+    if warn.direction != "BUY":
+        log.debug(f"Blocked SELL sniper: {warn.pair} (spot trading only)")
+        return False
+
+    ts_str = datetime.fromtimestamp(warn.timestamp, tz=timezone.utc).strftime("%d %b %Y  %H:%M UTC")
+
+    msg = "\n".join([
+        f"{'─'*30}",
+        f"🎯 *{SYSTEM_NAME} — SNIPER ENTRY*",
+        f"{'─'*30}",
+        f"",
+        f"📈 *{warn.pair}*  `{warn.timeframe}`  `{warn.signal_type}`",
+        f"🟩 BUY",
+        f"",
+        f"📍 *Harga semasa :* `{_fmt(warn.current_price)}`",
+        f"📐 *Zon entry    :* `{_fmt(warn.zone_bot)}` — `{_fmt(warn.zone_top)}`",
+        f"📏 *Jarak ke zon :* `{warn.pct_away:.2f}%` lagi",
+        f"",
+        f"⏳ _Bersedia — signal akan muncul_",
+        f"_apabila harga masuk zon entry_",
+        f"",
+        f"🕐 `{ts_str}`",
+        f"{'─'*30}",
+    ])
+
+    ok, _ = send_to_channel(msg, reply_markup=_inline_buttons(warn.pair))
+    if ok:
+        log.info(f"🎯 Sniper: {warn.pair} BUY {warn.timeframe} ({warn.pct_away:.1f}% away)")
+    return ok
 
 
 # ── TP/SL Hit → REPLY to original signal ─────────────────────────────────────
 
 def send_tp_hit(trade: dict, tp_level: str, hit_price: float) -> bool:
-    """
-    Reply to original signal message when TP is hit.
-    trade dict keys: pair, direction, entry, tp1, tp2, tp3, sl, msg_id, ts, timeframe
-    tp_level: 'TP1', 'TP2', 'TP3'
-    """
     entry    = trade["entry"]
-    pnl      = (hit_price - entry) / entry * 100 if trade["direction"] == "BUY" \
-          else (entry - hit_price) / entry * 100
-    duration = _duration_str(trade.get("hit_time", 0) or ((__import__('time').time()) - trade["ts"]))
+    pnl      = (hit_price - entry) / entry * 100
+    duration = _duration_str((__import__('time').time()) - trade["ts"])
     tp_price = trade[tp_level.lower()]
 
-    # SL adjustment info
     if tp_level == "TP1":
-        new_sl   = entry
-        sl_note  = f"📌 *SL dipindah → * `{_fmt(new_sl)}`  *(Breakeven)*"
-        next_tp  = f"🎯 Menunggu TP2: `{_fmt(trade['tp2'])}`"
-        footer   = f"{sl_note}\n{next_tp}"
+        new_sl  = entry
+        footer  = f"📌 *SL → * `{_fmt(new_sl)}`  *(Breakeven)*\n🎯 Menunggu TP2: `{_fmt(trade['tp2'])}`"
     elif tp_level == "TP2":
-        new_sl   = trade["tp1"]
-        sl_note  = f"📌 *SL dipindah → * `{_fmt(new_sl)}`  *(Lock TP1)*"
-        next_tp  = f"🎯 Menunggu TP3: `{_fmt(trade['tp3'])}`"
-        footer   = f"{sl_note}\n{next_tp}"
-    else:  # TP3
-        footer   = "🏆 *Semua TP tercapai! Trade ditutup.*"
+        new_sl  = trade["tp1"]
+        footer  = f"📌 *SL → * `{_fmt(new_sl)}`  *(Lock TP1)*\n🎯 Menunggu TP3: `{_fmt(trade['tp3'])}`"
+    else:
+        footer  = "🏆 *Semua TP tercapai! Trade ditutup.*"
 
     msg = "\n".join([
         f"{'─'*30}",
         f"✅ *{tp_level} HIT — PROFIT*",
         f"{'─'*30}",
         f"",
-        f"{'📈' if trade['direction']=='BUY' else '📉'} *{trade['pair']}*  `{trade.get('timeframe','')}`",
+        f"📈 *{trade['pair']}*  `{trade.get('timeframe','')}`",
         f"",
         f"💰 Entry   : `{_fmt(entry)}`",
         f"🎯 {tp_level}     : `{_fmt(tp_price)}`",
@@ -188,24 +212,21 @@ def send_tp_hit(trade: dict, tp_level: str, hit_price: float) -> bool:
 
     ok, _ = send_to_channel(msg, reply_to=trade.get("msg_id"))
     if ok:
-        log.info(f"✅ {tp_level} reply: {trade['pair']} +{pnl:.1f}%")
+        log.info(f"✅ {tp_level}: {trade['pair']} +{pnl:.1f}%")
     return ok
 
 
 def send_sl_hit(trade: dict, hit_price: float) -> bool:
-    """Reply to original signal message when SL is hit."""
     entry    = trade["entry"]
-    pnl      = (hit_price - entry) / entry * 100 if trade["direction"] == "BUY" \
-          else (entry - hit_price) / entry * 100
-    duration = _duration_str(trade.get("hit_time", 0) or ((__import__('time').time()) - trade["ts"]))
+    pnl      = (hit_price - entry) / entry * 100
+    duration = _duration_str((__import__('time').time()) - trade["ts"])
 
-    # Check if any TP was hit before SL (partial win)
-    tps_hit  = []
+    tps_hit = []
     if trade.get("tp1_hit"): tps_hit.append("TP1")
     if trade.get("tp2_hit"): tps_hit.append("TP2")
 
     if tps_hit:
-        status_line = f"⚠️ *SL HIT — Sebahagian untung ({', '.join(tps_hit)} tercapai)*"
+        status_line = f"⚠️ *SL HIT — Separa untung ({', '.join(tps_hit)} tercapai)*"
     else:
         status_line = f"🛑 *SL HIT — RUGI*"
 
@@ -214,7 +235,7 @@ def send_sl_hit(trade: dict, hit_price: float) -> bool:
         f"{status_line}",
         f"{'─'*30}",
         f"",
-        f"{'📈' if trade['direction']=='BUY' else '📉'} *{trade['pair']}*  `{trade.get('timeframe','')}`",
+        f"📈 *{trade['pair']}*  `{trade.get('timeframe','')}`",
         f"",
         f"💰 Entry   : `{_fmt(entry)}`",
         f"🛑 SL      : `{_fmt(trade['sl'])}`",
@@ -227,26 +248,11 @@ def send_sl_hit(trade: dict, hit_price: float) -> bool:
 
     ok, _ = send_to_channel(msg, reply_to=trade.get("msg_id"))
     if ok:
-        log.info(f"🛑 SL reply: {trade['pair']} {pnl:.1f}%")
+        log.info(f"🛑 SL: {trade['pair']} {pnl:.1f}%")
     return ok
 
 
-# ── Near-entry → ADMIN ONLY ──────────────────────────────────────────────────
-
-def send_near_entry(warn) -> bool:
-    arrow = "📈" if warn.direction == "BUY" else "📉"
-    ts_str = datetime.fromtimestamp(warn.timestamp, tz=timezone.utc).strftime("%H:%M UTC")
-    msg = "\n".join([
-        f"⚠️ *HAMPIR ENTRY*",
-        f"{arrow} *{warn.pair}*  `{warn.timeframe}`  `{warn.signal_type}`",
-        f"Arah     : *{'BELI' if warn.direction=='BUY' else 'JUAL'}*",
-        f"Harga    : `{_fmt(warn.current_price)}`",
-        f"Zon entry: `{_fmt(warn.zone_bot)}` — `{_fmt(warn.zone_top)}`",
-        f"Jarak    : `{warn.pct_away:.2f}%` lagi",
-        f"🕐 `{ts_str}`",
-    ])
-    return send_to_admin(msg)
-
+# ── System → ADMIN ONLY ──────────────────────────────────────────────────────
 
 def send_system_message(text: str) -> bool:
     return send_to_admin(f"🤖 *{SYSTEM_NAME}*\n\n{text}")
