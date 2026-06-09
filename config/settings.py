@@ -55,6 +55,7 @@ SL_BUFFER         = 0.005
 
 # ── Advanced Filters (NEW) ───────────────────────────────────────────────────
 TREND_FILTER_ENABLED = True          # Filter signal lawan trend H1/H4/D1
+SPOT_MODE = True                     # True = hanya BUY signal (spot trading)
 COOLDOWN_SECONDS = 3600              # 1 jam cooldown per pair (elak spam)
 REQUIRE_CONFIRMATION = False         # Tunggu confirmation candle
 MIN_BB_WIDTH_PERCENT = 0.02          # Min BB width (elak ranging market)
