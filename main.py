@@ -1,18 +1,20 @@
 """
-main.py — Delta X v3 · Scanner Engine
+main.py — Delta X v4 · Scanner + Trade Monitor
 
-Changes vs v2:
-  • Admin bot integrated (command handler in background thread)
-  • System messages routed to ADMIN only (klien tak nampak)
-  • Pause/resume via /pause /resume admin commands
-  • Callbacks registered for /clearcd and /trend
+New in v4:
+  • ACTIVE_TRADES tracking with telegram message_id
+  • _monitor_active_signals() — checks TP/SL hits every 5 min
+  • TP1 hit → SL moves to entry (breakeven)
+  • TP2 hit → SL moves to TP1 (lock profit)
+  • TP3 hit / SL hit → trade closed, reply sent
+  • Win/loss stats
 """
 from __future__ import annotations
 
 import time
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -30,15 +32,19 @@ from core.signals import (
     EV_EXTREM, EV_MHV, EV_ENTRY_ZONE, EV_RISK_BLOCK,
     EV_SIGNAL, EV_CSM, EV_CSM_REENTRY, EV_NEAR_ENTRY,
 )
-from data.binance_feed  import get_all_symbols, get_klines
+from data.binance_feed  import get_all_symbols, get_klines, get_current_price
 from data.pair_filter   import filter_pairs
-from database.supabase_client   import log_signal
-from notifications.telegram_bot import send_signal, send_near_entry, send_system_message
-from notifications              import admin_bot
+from database.supabase_client import log_signal, update_signal_status, get_active_signals
+from notifications.telegram_bot import (
+    send_signal, send_near_entry, send_system_message,
+    send_tp_hit, send_sl_hit,
+)
+from notifications import admin_bot
 from web.app import app, update_state, get_state
 from utils.logger import get_logger
 
 log = get_logger("main")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Runtime state
@@ -48,21 +54,28 @@ PAIRS:         list[str]                         = []
 TRACKERS:      dict[str, dict[str, BBMATracker]] = defaultdict(dict)
 TREND_CACHE:   dict[str, dict[str, str]]         = defaultdict(dict)
 PRICE_CACHE:   dict[str, float]                  = {}
-SIGNALS_TODAY: int                               = 0
-COOLDOWN:      dict[str, dict[str, float]]       = defaultdict(dict)
+SIGNALS_TODAY: int = 0
+WINS_TODAY:    int = 0
+LOSSES_TODAY:  int = 0
+
+COOLDOWN:      dict[str, dict[str, float]] = defaultdict(dict)
 COOLDOWN_HOURS = 4
+
+# Active trades being monitored for TP/SL
+# key = signal_id, value = trade dict
+ACTIVE_TRADES: dict[str, dict] = {}
+
 _lock = threading.Lock()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Admin callbacks (registered once at boot, used by admin_bot.py)
+# Admin callbacks
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _cb_clear_cooldown() -> int:
     with _lock:
         total = sum(len(v) for v in COOLDOWN.values())
         COOLDOWN.clear()
-    log.info(f"Cooldown cleared by admin ({total} entries)")
     return total
 
 
@@ -111,24 +124,18 @@ class ScanStats:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Trend filter
+# Trend filter + Cooldown
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _trend_allows(direction: str, trends: dict) -> bool:
     d1 = trends.get("1d", "NEUTRAL")
     h4 = trends.get("4h", "NEUTRAL")
-    if direction == "BUY":
-        if d1 == "BEARISH" and h4 in ("BEARISH", "NEUTRAL"):
-            return False
-    else:
-        if d1 == "BULLISH" and h4 in ("BULLISH", "NEUTRAL"):
-            return False
+    if direction == "BUY"  and d1 == "BEARISH" and h4 in ("BEARISH", "NEUTRAL"):
+        return False
+    if direction == "SELL" and d1 == "BULLISH" and h4 in ("BULLISH", "NEUTRAL"):
+        return False
     return True
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Cooldown
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _in_cooldown(pair: str, direction: str) -> bool:
     with _lock:
@@ -154,9 +161,8 @@ def _update_trend_single(pair: str):
             if df is None or len(df) < 55:
                 continue
             df = calculate_bbma(df)
-            trend = get_trend_direction(df)
             with _lock:
-                TREND_CACHE[pair][tf] = trend
+                TREND_CACHE[pair][tf] = get_trend_direction(df)
                 PRICE_CACHE[pair]     = float(df.iloc[-1]["close"])
             time.sleep(BATCH_DELAY)
         except Exception as e:
@@ -167,7 +173,146 @@ def _update_trends_batch(pairs: list[str]):
     for i in range(0, len(pairs), BATCH_SIZE):
         for pair in pairs[i : i + BATCH_SIZE]:
             _update_trend_single(pair)
-        log.debug(f"Trend cache: {min(i+BATCH_SIZE, len(pairs))}/{len(pairs)}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Restore active trades after restart
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _restore_active_trades():
+    """Restore ACTIVE_TRADES from Supabase so TP/SL monitoring survives restart."""
+    active = get_active_signals()
+    if not active:
+        log.info("Tiada active trades untuk di-restore")
+        return
+
+    restored = 0
+    with _lock:
+        for s in active:
+            sig_id = s.get("signal_id", "")
+            try:
+                created = s.get("created_at", "")
+                ts = (
+                    datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()
+                    if created else time.time()
+                )
+                ACTIVE_TRADES[sig_id] = {
+                    "pair":        s["pair"],
+                    "direction":   s["direction"],
+                    "timeframe":   s.get("timeframe", "15m"),
+                    "entry":       float(s["entry_price"]),
+                    "tp1":         float(s["tp1_price"]),
+                    "tp2":         float(s.get("tp2_price") or 0),
+                    "tp3":         float(s.get("tp3_price") or 0),
+                    "sl":          float(s["sl_price"]),
+                    "sl_orig":     float(s["sl_price"]),
+                    "msg_id":      s.get("telegram_msg_id") or 0,
+                    "ts":          ts,
+                    "tp1_hit":     False,
+                    "tp2_hit":     False,
+                    "tp3_hit":     False,
+                    "signal_type": s.get("signal_type", ""),
+                }
+                restored += 1
+            except Exception as e:
+                log.warning(f"Restore skip {sig_id}: {e}")
+
+    log.info(f"✅ Restored {restored} active trades dari Supabase")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TP/SL Trade Monitor
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _monitor_active_signals():
+    """Check all active trades against current prices for TP/SL hits."""
+    global WINS_TODAY, LOSSES_TODAY
+
+    if not ACTIVE_TRADES:
+        return
+
+    log.info(f"🔍 Monitoring {len(ACTIVE_TRADES)} active trades …")
+
+    closed = []
+
+    for sig_id, trade in list(ACTIVE_TRADES.items()):
+        try:
+            price = get_current_price(trade["pair"])
+            if price is None:
+                continue
+
+            with _lock:
+                PRICE_CACHE[trade["pair"]] = price
+
+            is_buy = trade["direction"] == "BUY"
+
+            # ── Check TP3 (full close) ────────────────────────────────────────
+            tp3_hit = price >= trade["tp3"] if is_buy else price <= trade["tp3"]
+            if tp3_hit:
+                send_tp_hit(trade, "TP3", price)
+                _close_trade(sig_id, "HIT_TP3", price)
+                WINS_TODAY += 1
+                closed.append(sig_id)
+                continue
+
+            # ── Check TP2 ─────────────────────────────────────────────────────
+            if not trade.get("tp2_hit"):
+                tp2_hit = price >= trade["tp2"] if is_buy else price <= trade["tp2"]
+                if tp2_hit:
+                    trade["tp2_hit"] = True
+                    trade["sl"] = trade["tp1"]   # SL → TP1 (lock profit)
+                    send_tp_hit(trade, "TP2", price)
+                    log.info(f"  🎯 TP2: {trade['pair']} — SL moved to TP1 ({trade['tp1']})")
+                    continue
+
+            # ── Check TP1 ─────────────────────────────────────────────────────
+            if not trade.get("tp1_hit"):
+                tp1_hit = price >= trade["tp1"] if is_buy else price <= trade["tp1"]
+                if tp1_hit:
+                    trade["tp1_hit"] = True
+                    trade["sl"] = trade["entry"]  # SL → Entry (breakeven)
+                    send_tp_hit(trade, "TP1", price)
+                    log.info(f"  🎯 TP1: {trade['pair']} — SL moved to breakeven ({trade['entry']})")
+                    continue
+
+            # ── Check SL ──────────────────────────────────────────────────────
+            sl_hit = price <= trade["sl"] if is_buy else price >= trade["sl"]
+            if sl_hit:
+                send_sl_hit(trade, price)
+                status = "HIT_SL"
+                if trade.get("tp1_hit") or trade.get("tp2_hit"):
+                    status = "PARTIAL_WIN"
+                    WINS_TODAY += 1
+                else:
+                    LOSSES_TODAY += 1
+                _close_trade(sig_id, status, price)
+                closed.append(sig_id)
+
+            time.sleep(0.3)
+
+        except Exception as e:
+            log.warning(f"Monitor error {trade['pair']}: {e}")
+
+    # Clean up closed trades
+    for sig_id in closed:
+        with _lock:
+            ACTIVE_TRADES.pop(sig_id, None)
+
+    if closed:
+        log.info(f"  📊 Closed {len(closed)} trades | Today: W={WINS_TODAY} L={LOSSES_TODAY}")
+
+
+def _close_trade(sig_id: str, status: str, close_price: float):
+    """Update Supabase with final status."""
+    trade = ACTIVE_TRADES.get(sig_id, {})
+    entry = trade.get("entry", 0)
+    is_buy = trade.get("direction") == "BUY"
+    pnl = ((close_price - entry) / entry * 100) if is_buy else ((entry - close_price) / entry * 100)
+
+    try:
+        update_signal_status(sig_id, status, close_price, pnl)
+    except Exception as e:
+        log.warning(f"Supabase update failed for {sig_id}: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -175,9 +320,8 @@ def _update_trends_batch(pairs: list[str]):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _scan_entry(tf: str):
-    # ── Pause check ─────────────────────────────────────────────────────────
     if get_state().get("paused", False):
-        log.info(f"⏸  [{tf}] Scan DIPAUSED — skip")
+        log.info(f"⏸  [{tf}] DIPAUSED — skip")
         return
 
     if not PAIRS:
@@ -211,27 +355,17 @@ def _scan_entry(tf: str):
                 elif ev == EV_RISK_BLOCK: stats.risk_blocked  += 1
                 elif ev == EV_NEAR_ENTRY: stats.near_entry_sent += 1
 
-                # Near-entry → admin only
                 if near_warn:
                     stats.near_entry_sent += 1
-                    threading.Thread(
-                        target=send_near_entry, args=(near_warn,), daemon=True
-                    ).start()
+                    threading.Thread(target=send_near_entry, args=(near_warn,), daemon=True).start()
 
                 if signal:
                     stats.in_entry_zone += 1
-
                     if not _trend_allows(signal.direction, trends):
                         stats.trend_blocked += 1
-                        log.debug(
-                            f"  ✗ TREND: {pair} {signal.direction} "
-                            f"D1={trends.get('1d','?')} H4={trends.get('4h','?')}"
-                        )
                         continue
-
                     if _in_cooldown(pair, signal.direction):
                         stats.cooldown_skipped += 1
-                        log.debug(f"  ✗ COOLDOWN: {pair} {signal.direction}")
                         continue
 
                     _handle_signal(signal)
@@ -239,7 +373,6 @@ def _scan_entry(tf: str):
                     stats.signals_fired += 1
 
                 stats.pairs_checked += 1
-
             except Exception as e:
                 stats.errors += 1
                 log.warning(f"Scan error {pair}/{tf}: {e}")
@@ -250,64 +383,99 @@ def _scan_entry(tf: str):
 
     with _lock:
         update_state(
-            pairs_scanned = stats.pairs_checked,
-            price_cache   = dict(list(PRICE_CACHE.items())[:100]),
-            trend_cache   = {p: dict(t) for p, t in list(TREND_CACHE.items())[:100]},
-            signals_today = SIGNALS_TODAY,
+            pairs_scanned  = stats.pairs_checked,
+            price_cache    = dict(list(PRICE_CACHE.items())[:100]),
+            trend_cache    = {p: dict(t) for p, t in list(TREND_CACHE.items())[:100]},
+            signals_today  = SIGNALS_TODAY,
+            active_trades  = len(ACTIVE_TRADES),
+            wins_today     = WINS_TODAY,
+            losses_today   = LOSSES_TODAY,
         )
 
 
 def _handle_signal(signal):
+    """Send signal to Telegram, log to DB, store for TP/SL monitoring."""
     global SIGNALS_TODAY
+
     log.info(
         f"🔔 SIGNAL: {signal.pair} {signal.direction} {signal.timeframe} "
         f"[{signal.signal_type}]  Entry={signal.entry_price:.6f}  "
         f"SL={signal.sl_pct:.1f}%  TP1={signal.tp1_pct:.1f}%"
     )
-    threading.Thread(target=send_signal,  args=(signal,), daemon=True).start()
-    threading.Thread(target=log_signal,   args=(signal,), daemon=True).start()
 
+    # Send to Telegram (synchronous to capture msg_id)
+    ok, msg_id = send_signal(signal)
+
+    # Log to Supabase
+    threading.Thread(target=log_signal, args=(signal, msg_id), daemon=True).start()
+
+    # Generate signal ID
+    import hashlib
+    ts_str = datetime.fromtimestamp(signal.timestamp, tz=timezone.utc).strftime("%Y%m%d%H%M")
+    sig_id = "DX-" + hashlib.md5(
+        f"{signal.pair}{signal.timeframe}{signal.direction}{ts_str}".encode()
+    ).hexdigest()[:8].upper()
+
+    # Store in ACTIVE_TRADES for monitoring
     with _lock:
         SIGNALS_TODAY += 1
+        ACTIVE_TRADES[sig_id] = {
+            "pair":      signal.pair,
+            "direction": signal.direction,
+            "timeframe": signal.timeframe,
+            "entry":     signal.entry_price,
+            "tp1":       signal.tp1_price,
+            "tp2":       signal.tp2_price,
+            "tp3":       signal.tp3_price,
+            "sl":        signal.sl_price,    # will be adjusted on TP hits
+            "sl_orig":   signal.sl_price,    # original SL (never changes)
+            "msg_id":    msg_id,
+            "ts":        signal.timestamp,
+            "tp1_hit":   False,
+            "tp2_hit":   False,
+            "tp3_hit":   False,
+            "signal_type": signal.signal_type,
+        }
+
         active = get_state().get("active_signals", [])
         active.insert(0, {
-            "pair":        signal.pair,
-            "timeframe":   signal.timeframe,
-            "direction":   signal.direction,
-            "entry":       signal.entry_price,
-            "tp1":         signal.tp1_price,
-            "sl":          signal.sl_price,
-            "tp1_pct":     signal.tp1_pct,
-            "sl_pct":      signal.sl_pct,
-            "signal_type": signal.signal_type,
-            "ts":          signal.timestamp,
+            "pair": signal.pair, "timeframe": signal.timeframe,
+            "direction": signal.direction, "entry": signal.entry_price,
+            "tp1": signal.tp1_price, "sl": signal.sl_price,
+            "tp1_pct": signal.tp1_pct, "sl_pct": signal.sl_pct,
+            "signal_type": signal.signal_type, "ts": signal.timestamp,
         })
         update_state(active_signals=active[:20])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Scheduler
+# Scheduler jobs
 # ─────────────────────────────────────────────────────────────────────────────
 
 def job_scan_m15():
     log.info("─" * 60)
-    log.info("⏱  M15 scan dimulakan …")
+    log.info("⏱  M15 scan …")
     _scan_entry("15m")
 
 def job_scan_m30():
     log.info("─" * 60)
-    log.info("⏱  M30 scan dimulakan …")
+    log.info("⏱  M30 scan …")
     _scan_entry("30m")
 
 def job_update_trends():
-    log.info("📊 Refresh trend H1/H4/D1 …")
+    log.info("📊 Trend refresh …")
     _update_trends_batch(PAIRS)
 
+def job_monitor():
+    _monitor_active_signals()
+
 def job_daily_reset():
-    global SIGNALS_TODAY
+    global SIGNALS_TODAY, WINS_TODAY, LOSSES_TODAY
     with _lock:
         SIGNALS_TODAY = 0
-    log.info("🔄 Daily counter reset")
+        WINS_TODAY    = 0
+        LOSSES_TODAY  = 0
+    log.info("🔄 Daily counters reset")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -316,7 +484,7 @@ def job_daily_reset():
 
 def initialise_pairs():
     global PAIRS
-    log.info("Fetching Binance symbol list …")
+    log.info("Fetching Binance symbols …")
     PAIRS = filter_pairs(get_all_symbols())
     log.info(f"Monitoring {len(PAIRS)} pairs")
 
@@ -326,53 +494,51 @@ def initialise_pairs():
                 TRACKERS[pair][tf] = BBMATracker(pair, tf)
 
     update_state(
-        pairs_total = len(PAIRS),
-        started_at  = datetime.now(timezone.utc).isoformat(),
-        status      = "running",
-        paused      = False,
+        pairs_total=len(PAIRS),
+        started_at=datetime.now(timezone.utc).isoformat(),
+        status="running", paused=False,
     )
 
-    log.info("Warming up trend cache …")
+    log.info("Warming trend cache …")
     _update_trends_batch(PAIRS)
-    log.info("Warm-up complete ✅")
+    log.info("Warm-up ✅")
 
-    # Boot message → admin only
     send_system_message(
         f"🚀 *{SYSTEM_NAME} v{SYSTEM_VERSION} Online*\n\n"
-        f"Pairs   : `{len(PAIRS)}`\n"
-        f"Entry TF: M15 + M30\n"
-        f"Trend TF: H1 / H4 / D1\n"
-        f"Filter  : Trend ✅  Cooldown ✅\n\n"
-        f"Taip /help untuk senarai command."
+        f"Pairs  : `{len(PAIRS)}`\n"
+        f"Entry  : M15 + M30\n"
+        f"Trend  : H1 / H4 / D1\n"
+        f"Monitor: TP/SL setiap 5 min\n\n"
+        f"/help untuk command"
     )
 
 
 def start_scheduler():
     s = BackgroundScheduler(timezone="UTC")
-    s.add_job(job_scan_m15,      IntervalTrigger(seconds=INTERVAL_M15), id="m15", misfire_grace_time=60)
-    s.add_job(job_scan_m30,      IntervalTrigger(seconds=INTERVAL_M30), id="m30", misfire_grace_time=60)
-    s.add_job(job_update_trends, IntervalTrigger(seconds=INTERVAL_H1),  id="h1",  misfire_grace_time=300)
+    s.add_job(job_scan_m15,      IntervalTrigger(seconds=INTERVAL_M15), id="m15",     misfire_grace_time=60)
+    s.add_job(job_scan_m30,      IntervalTrigger(seconds=INTERVAL_M30), id="m30",
+              next_run_time=datetime.now(timezone.utc) + timedelta(minutes=2),
+              misfire_grace_time=60)
+    s.add_job(job_update_trends, IntervalTrigger(seconds=INTERVAL_H1),  id="h1",      misfire_grace_time=300)
+    s.add_job(job_monitor,       IntervalTrigger(minutes=5),            id="monitor",  misfire_grace_time=60)
     s.add_job(job_daily_reset,   IntervalTrigger(hours=24),             id="daily")
     s.start()
-    log.info("Scheduler started ✅")
+    log.info("Scheduler ✅ (scan M15/M30 + monitor setiap 5m)")
     return s
 
 
 def _boot():
     try:
         time.sleep(2)
-
-        # Register callbacks for admin_bot before starting it
         admin_bot.register("clear_cooldown", _cb_clear_cooldown)
         admin_bot.register("get_trend",      _cb_get_trend)
         admin_bot.start()
-
         initialise_pairs()
+        _restore_active_trades()
         start_scheduler()
-
         threading.Thread(target=job_scan_m15, daemon=True).start()
+        time.sleep(120)   # 2 min gap before M30
         threading.Thread(target=job_scan_m30, daemon=True).start()
-
     except Exception as e:
         log.error(f"Boot failed: {e}")
         update_state(status="error")
