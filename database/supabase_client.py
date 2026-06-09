@@ -46,7 +46,7 @@ def _signal_id(sig: SignalResult) -> str:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def log_signal(sig: SignalResult) -> bool:
+def log_signal(sig: SignalResult, telegram_msg_id: int = 0) -> bool:
     """Insert a new signal record into Supabase."""
     client = _get_client()
     if not client:
@@ -76,6 +76,7 @@ def log_signal(sig: SignalResult) -> bool:
         "bb_lower":     sig.bb_lower,
         "status":       "ACTIVE",
         "created_at":   datetime.fromtimestamp(sig.timestamp, tz=timezone.utc).isoformat(),
+        "telegram_msg_id": telegram_msg_id,
     }
 
     try:
@@ -106,6 +107,24 @@ def get_recent_signals(limit: int = 50) -> list[dict]:
         return []
 
 
+def get_active_signals() -> list[dict]:
+    """Fetch all signals with status=ACTIVE (for restore after restart)."""
+    client = _get_client()
+    if not client:
+        return []
+    try:
+        res = (
+            client.table("signals")
+            .select("*")
+            .eq("status", "ACTIVE")
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        log.error(f"Supabase fetch active failed: {e}")
+        return []
+
+
 def log_system_event(level: str, module: str, message: str):
     """Log a system event to Supabase (non-blocking best-effort)."""
     client = _get_client()
@@ -119,3 +138,26 @@ def log_system_event(level: str, module: str, message: str):
         }).execute()
     except Exception:
         pass    # silently ignore — don't let DB errors break the main loop
+
+
+def update_signal_status(
+    signal_id: str,
+    status: str,
+    close_price: float,
+    pnl_pct: float,
+):
+    """Update signal status when TP or SL is hit."""
+    client = _get_client()
+    if not client:
+        return
+    try:
+        from datetime import datetime, timezone
+        client.table("signals").update({
+            "status":      status,
+            "close_price": close_price,
+            "pnl_pct":     round(pnl_pct, 2),
+            "closed_at":   datetime.now(timezone.utc).isoformat(),
+        }).eq("signal_id", signal_id).execute()
+        log.info(f"Signal {signal_id} → {status} (P&L: {pnl_pct:+.1f}%)")
+    except Exception as e:
+        log.warning(f"Supabase update failed {signal_id}: {e}")
