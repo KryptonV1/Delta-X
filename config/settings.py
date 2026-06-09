@@ -1,6 +1,3 @@
-"""
-config/settings.py - Delta X Global Configuration
-"""
 import os
 from dotenv import load_dotenv
 load_dotenv()
