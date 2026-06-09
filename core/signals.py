@@ -148,7 +148,7 @@ def _detect_csa(row: pd.Series, direction: str) -> tuple[bool, bool]:
     return bool(early), bool(strong)
 
 
-def _in_ma_zone_buy(row: pd.Series, tol: float = 0.01) -> bool:
+def _in_ma_zone_buy(row: pd.Series, tol: float = 0.015) -> bool:
     """
     BUY Re-Entry zone: price has pulled back to the MA5/MA10 Low band.
     Candle low touches the zone AND close does not collapse through MA10 Low.
@@ -160,7 +160,7 @@ def _in_ma_zone_buy(row: pd.Series, tol: float = 0.01) -> bool:
     return bool(touched and closed_ok)
 
 
-def _in_ma_zone_sell(row: pd.Series, tol: float = 0.01) -> bool:
+def _in_ma_zone_sell(row: pd.Series, tol: float = 0.015) -> bool:
     """
     SELL Re-Entry zone: price has pulled back to the MA5/MA10 High band.
     Candle high touches the zone AND close does not push through MA10 High.
