@@ -18,6 +18,7 @@ from typing import Optional
 import pandas as pd
 
 from config.settings import SL_BUFFER, MAX_LOSS_PERCENT, MIN_TP1_PERCENT
+from core.bbma import is_trending_market, has_confirmation_candle
 from utils.logger import get_logger
 
 log = get_logger("signals")
@@ -158,6 +159,8 @@ class BBMATracker:
     def __init__(self, pair: str, timeframe: str):
         self.pair      = pair
         self.timeframe = timeframe
+        self.last_signal_time = 0  # NEW: Untuk cooldown
+        self.cooldown_seconds = getattr(settings, 'COOLDOWN_SECONDS', 3600)  # NEW
         self._reset()
 
     # ── Public ──────────────────────────────────────────────────────────────
@@ -177,6 +180,12 @@ class BBMATracker:
             return None, None
 
         trends = trends or {}
+    
+        # NEW: Check cooldown dulu!
+        if time.time() - self.last_signal_time < self.cooldown_seconds:
+            return None, None
+    
+    self.last_event = EV_NONE
         self.last_event = EV_NONE
 
         ext_buy, ext_sell = _detect_extrem(df)
@@ -342,6 +351,28 @@ class BBMATracker:
                 pct_away      = round(pct, 2),
             )
         return None
+      
+    def _passes_trend_filter(self, trends: dict) -> bool:
+        """
+        Check jika signal selari dengan trend TF besar.
+        BUY hanya jika majority H1/H4/D1 BULLISH atau NEUTRAL
+        SELL hanya jika majority H1/H4/D1 BEARISH atau NEUTRAL
+        """
+        if not getattr(settings, 'TREND_FILTER_ENABLED', True):
+            return True
+    
+        trend_scores = {"BULLISH": 1, "NEUTRAL": 0, "BEARISH": -1}
+    
+        h1_score = trend_scores.get(trends.get("1h", "NEUTRAL"), 0)
+        h4_score = trend_scores.get(trends.get("4h", "NEUTRAL"), 0)
+        daily_score = trend_scores.get(trends.get("1d", "NEUTRAL"), 0)
+    
+        total_score = h1_score + h4_score + daily_score
+    
+        if self.direction == "BUY":
+            return total_score >= 0  # Majority bullish/neutral
+        else:  # SELL
+            return total_score <= 0  # Majority bearish/neutral
 
     def _build_signal(
         self,
@@ -352,6 +383,25 @@ class BBMATracker:
     ) -> Optional[SignalResult]:
         """Build and risk-validate a SignalResult. Returns None if risk fails."""
         entry = float(last["close"])
+    
+        # NEW: 1. Check trend filter
+        if not self._passes_trend_filter(trends):
+            log.debug(
+                f"{self.pair}/{self.timeframe} — {self.direction} REJECTED by trend filter "
+                f"(H1:{trends.get('1h', 'N/A')}, H4:{trends.get('4h', 'N/A')}, D1:{trends.get('1d', 'N/A')})"
+            )
+            return None
+    
+        # NEW: 2. Check trending market (elak sideways)
+        if not is_trending_market(df, settings.MIN_BB_WIDTH_PERCENT):
+            log.debug(f"{self.pair}/{self.timeframe} — Ranging market, skip entry")
+            return None
+    
+        # NEW: 3. Check confirmation candle (optional)
+        if getattr(settings, 'REQUIRE_CONFIRMATION', False):
+            if not has_confirmation_candle(df, self.direction, settings.CONFIRMATION_CANDLES):
+                log.debug(f"{self.pair}/{self.timeframe} — No confirmation candle yet")
+                return None
 
         # Reference candle for SL: Extrem candle (EXTREM_MHV) or CSM candle (CSM_REENTRY)
         ref_candle = (
@@ -380,24 +430,28 @@ class BBMATracker:
         def _pct(a, b):
             return round((a - b) / b * 100, 2)
 
-        return SignalResult(
+        result = SignalResult(
             pair        = self.pair,
             timeframe   = self.timeframe,
             direction   = self.direction,
             signal_type = signal_type,
             entry_price = entry,
             sl_price    = round(sl,  8),
-            tp1_price   = round(tp1, 8),
+            tp1_price   = round( tp1, 8),
             tp2_price   = round(tp2, 8),
             tp3_price   = round(tp3, 8),
             sl_pct      = _pct(sl,  entry),
             tp1_pct     = _pct(tp1, entry),
-            tp2_pct     = _pct(tp2, entry),
+            tp2_pct      = _pct(tp2, entry),
             tp3_pct     = _pct(tp3, entry),
             bb_upper    = float(last["bb_upper"]),
             bb_middle   = float(last["bb_middle"]),
             bb_lower    = float(last["bb_lower"]),
-            trend_h1    = trends.get("1h",  "NEUTRAL"),
-            trend_h4    = trends.get("4h",  "NEUTRAL"),
-            trend_daily = trends.get("1d",  "NEUTRAL"),
+            trend_h1    = trends.get("1h",   "NEUTRAL"),
+            trend_h4    = trends.get("4h",   "NEUTRAL"),
+            trend_daily = trends.get("1d",   "NEUTRAL"),
         )
+        # NEW: Set cooldown timestamp
+        self.last_signal_time = time.time()
+    
+        return result
