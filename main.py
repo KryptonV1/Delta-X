@@ -22,7 +22,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from config.settings import (
     ENTRY_TIMEFRAMES, TREND_TIMEFRAMES,
-    INTERVAL_M15, INTERVAL_M30, INTERVAL_H1,
+    INTERVAL_H1, INTERVAL_H4, INTERVAL_DAILY,
     BATCH_SIZE, BATCH_DELAY,
     SYSTEM_NAME, SYSTEM_VERSION,
 )
@@ -378,12 +378,34 @@ def _scan_entry(tf: str):
     stats.print_summary()
 
     with _lock:
+        # Build active trades with current prices for dashboard
+        trades_data = []
+        for sig_id, t in ACTIVE_TRADES.items():
+            trades_data.append({
+                "signal_id": sig_id,
+                "pair": t["pair"],
+                "timeframe": t["timeframe"],
+                "direction": t.get("direction", "BUY"),
+                "signal_type": t.get("signal_type", ""),
+                "entry": t["entry"],
+                "tp1": t["tp1"],
+                "tp2": t.get("tp2", 0),
+                "tp3": t.get("tp3", 0),
+                "sl": t["sl"],
+                "sl_orig": t.get("sl_orig", t["sl"]),
+                "tp1_hit": t.get("tp1_hit", False),
+                "tp2_hit": t.get("tp2_hit", False),
+                "current_price": PRICE_CACHE.get(t["pair"], 0),
+                "ts": t.get("ts", 0),
+            })
+
         update_state(
             pairs_scanned  = stats.pairs_checked,
             price_cache    = dict(list(PRICE_CACHE.items())[:100]),
             trend_cache    = {p: dict(t) for p, t in list(TREND_CACHE.items())[:100]},
             signals_today  = SIGNALS_TODAY,
             active_trades  = len(ACTIVE_TRADES),
+            active_trades_data = trades_data,
             wins_today     = WINS_TODAY,
             losses_today   = LOSSES_TODAY,
         )
@@ -448,15 +470,15 @@ def _handle_signal(signal):
 # Scheduler jobs
 # ─────────────────────────────────────────────────────────────────────────────
 
-def job_scan_m15():
+def job_scan_h1():
     log.info("─" * 60)
-    log.info("⏱  M15 scan …")
-    _scan_entry("15m")
+    log.info("⏱  H1 scan …")
+    _scan_entry("1h")
 
-def job_scan_m30():
+def job_scan_h4():
     log.info("─" * 60)
-    log.info("⏱  M30 scan …")
-    _scan_entry("30m")
+    log.info("⏱  H4 scan …")
+    _scan_entry("4h")
 
 def job_update_trends():
     log.info("📊 Trend refresh …")
@@ -502,8 +524,8 @@ def initialise_pairs():
     send_system_message(
         f"🚀 *{SYSTEM_NAME} v{SYSTEM_VERSION} Online*\n\n"
         f"Pairs  : `{len(PAIRS)}`\n"
-        f"Entry  : M15 + M30\n"
-        f"Trend  : H1 / H4 / D1\n"
+        f"Entry  : H1 + H4\n"
+        f"Trend  : H4 / D1\n"
         f"Monitor: TP/SL setiap 5 min\n\n"
         f"/help untuk command"
     )
@@ -511,15 +533,15 @@ def initialise_pairs():
 
 def start_scheduler():
     s = BackgroundScheduler(timezone="UTC")
-    s.add_job(job_scan_m15,      IntervalTrigger(seconds=INTERVAL_M15), id="m15",     misfire_grace_time=60)
-    s.add_job(job_scan_m30,      IntervalTrigger(seconds=INTERVAL_M30), id="m30",
-              next_run_time=datetime.now(timezone.utc) + timedelta(minutes=2),
-              misfire_grace_time=60)
-    s.add_job(job_update_trends, IntervalTrigger(seconds=INTERVAL_H1),  id="h1",      misfire_grace_time=300)
-    s.add_job(job_monitor,       IntervalTrigger(minutes=5),            id="monitor",  misfire_grace_time=60)
-    s.add_job(job_daily_reset,   IntervalTrigger(hours=24),             id="daily")
+    s.add_job(job_scan_h1,        IntervalTrigger(seconds=INTERVAL_H1),  id="h1_entry", misfire_grace_time=120)
+    s.add_job(job_scan_h4,        IntervalTrigger(seconds=INTERVAL_H4),  id="h4_entry",
+              next_run_time=datetime.now(timezone.utc) + timedelta(minutes=5),
+              misfire_grace_time=300)
+    s.add_job(job_update_trends,  IntervalTrigger(seconds=INTERVAL_H4),  id="trends",   misfire_grace_time=300)
+    s.add_job(job_monitor,        IntervalTrigger(minutes=5),            id="monitor",  misfire_grace_time=60)
+    s.add_job(job_daily_reset,    IntervalTrigger(hours=24),             id="daily")
     s.start()
-    log.info("Scheduler ✅ (scan M15/M30 + monitor setiap 5m)")
+    log.info("Scheduler ✅ (scan H1/H4 + monitor setiap 5m)")
     return s
 
 
@@ -532,9 +554,9 @@ def _boot():
         initialise_pairs()
         _restore_active_trades()
         start_scheduler()
-        threading.Thread(target=job_scan_m15, daemon=True).start()
-        time.sleep(120)   # 2 min gap before M30
-        threading.Thread(target=job_scan_m30, daemon=True).start()
+        threading.Thread(target=job_scan_h1, daemon=True).start()
+        time.sleep(120)   # 2 min gap before H4
+        threading.Thread(target=job_scan_h4, daemon=True).start()
     except Exception as e:
         log.error(f"Boot failed: {e}")
         update_state(status="error")
