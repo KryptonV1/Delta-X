@@ -28,9 +28,9 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PORT       = int(os.getenv("PORT", 5000))
 SECRET_KEY = os.getenv("SECRET_KEY", "delta-x-secret")
 
-# ── Timeframes ───────────────────────────────────────────────────────────────
-ENTRY_TIMEFRAMES = ["15m", "30m"]
-TREND_TIMEFRAMES = ["1h", "4h", "1d"]
+# ── Timeframes (SOP: Setup TF=H1/H4, Major TF=D1) ──────────────────
+ENTRY_TIMEFRAMES = ["1h", "4h"]        # BBMA cycle: Extreme→MHV→CSA→Re-Entry
+TREND_TIMEFRAMES = ["4h", "1d"]        # Trend direction filter
 ALL_TIMEFRAMES   = TREND_TIMEFRAMES + ENTRY_TIMEFRAMES
 BINANCE_TF_LABELS = {
     "15m":  "M15",
@@ -50,13 +50,11 @@ CANDLE_LIMIT = 120
 
 # ── Risk Management ──────────────────────────────────────────────────────────
 MAX_LOSS_PERCENT  = 20.0
-MIN_TP1_PERCENT   = 20.0
-SL_BUFFER         = 0.005
+SL_BUFFER         = 0.01               # 1% buffer below ref candle (swing room)
 
 # ── Advanced Filters (NEW) ───────────────────────────────────────────────────
-TREND_FILTER_ENABLED = True          # Filter signal lawan trend H1/H4/D1
-SPOT_MODE = True                     # True = hanya BUY signal (spot trading)
-COOLDOWN_SECONDS = 3600              # 1 jam cooldown per pair (elak spam)
+TREND_FILTER_ENABLED = True          # Filter signal lawan trend D1
+COOLDOWN_SECONDS = 14400             # 4 jam cooldown per pair (H4 candle cycle)
 REQUIRE_CONFIRMATION = False         # Tunggu confirmation candle
 MIN_BB_WIDTH_PERCENT = 0.02          # Min BB width (elak ranging market)
 CONFIRMATION_CANDLES = 2             # Bilangan candle untuk confirm trend
