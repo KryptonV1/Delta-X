@@ -447,7 +447,7 @@ class BBMATracker:
             return None
 
         # Minimum TP1 distance — reject signals with tiny reward
-        if tp1_pct < 0.3:
+        if tp1_pct < 0.2:
             log.debug(
                 f"{self.pair}/{self.timeframe} TP1 too small "
                 f"({tp1_pct:.2f}% < 0.3%) — skip"
