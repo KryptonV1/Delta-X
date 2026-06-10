@@ -400,7 +400,7 @@ class BBMATracker:
         # never ridiculously tight (e.g. PARTIUSDT had only 0.14%).
         ref_low   = float(ref_candle["low"])
         sl        = ref_low * (1 - SL_BUFFER)
-        min_sl    = entry * 0.99                 # floor: at least 1% below
+        min_sl    = entry * 0.98                 # floor: at least 2% below
         if sl > min_sl:
             sl = min_sl
 
@@ -447,10 +447,10 @@ class BBMATracker:
             return None
 
         # Minimum TP1 distance — reject signals with tiny reward
-        if tp1_pct < 0.2:
+        if tp1_pct < 0.5:
             log.debug(
                 f"{self.pair}/{self.timeframe} TP1 too small "
-                f"({tp1_pct:.2f}% < 0.3%) — skip"
+                f"({tp1_pct:.2f}% < 0.5%) — skip"
             )
             return None
 
