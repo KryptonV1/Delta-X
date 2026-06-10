@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ system_name }} Dashboard</title>
+<style>
+  :root{
+    --bg:#0a0e1a;--surface:#111827;--surface2:#1c2333;--border:#2a3449;
+    --accent:#3b82f6;--accent2:#8b5cf6;--green:#10b981;--red:#ef4444;
+    --yellow:#f59e0b;--text:#e2e8f0;--muted:#64748b;--font:'Inter',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px}
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
+  .wrap{max-width:1400px;margin:0 auto;padding:16px}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px}
+  .logo{display:flex;align-items:center;gap:10px}
+  .logo-icon{width:38px;height:38px;background:linear-gradient(135deg,var(--accent),var(--accent2));
+    border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:17px}
+  .logo-name{font-size:20px;font-weight:700;letter-spacing:.5px}
+  .logo-sub{font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase}
+  .status-badge{display:flex;align-items:center;gap:6px;background:var(--surface);
+    border:1px solid var(--border);border-radius:20px;padding:5px 12px;font-size:12px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:18px}
+  .stat{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px}
+  .stat-label{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:4px}
+  .stat-value{font-size:24px;font-weight:700;font-family:'JetBrains Mono',monospace}
+  .stat-sub{font-size:10px;color:var(--muted);margin-top:2px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:16px}
+  .card-head{padding:12px 16px;border-bottom:1px solid var(--border);
+    display:flex;align-items:center;justify-content:space-between}
+  .card-title{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+  .refresh-btn{background:none;border:1px solid var(--border);color:var(--muted);
+    border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer}
+  .refresh-btn:hover{background:var(--surface2);color:var(--text)}
+  table{width:100%;border-collapse:collapse}
+  th{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);
+    padding:8px 12px;text-align:left;border-bottom:1px solid var(--border)}
+  td{padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  .mono{font-family:'JetBrains Mono',monospace;font-size:11px}
+  .badge{display:inline-block;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:600}
+  .buy{background:rgba(16,185,129,.15);color:#10b981;border:1px solid rgba(16,185,129,.25)}
+  .badge-win{background:rgba(16,185,129,.15);color:#10b981;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:600}
+  .badge-loss{background:rgba(239,68,68,.15);color:#ef4444;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:600}
+  .badge-active{background:rgba(59,130,246,.15);color:var(--accent);border-radius:4px;padding:2px 7px;font-size:10px;font-weight:600}
+  .badge-be{background:rgba(245,158,11,.15);color:var(--yellow);border-radius:4px;padding:2px 7px;font-size:10px;font-weight:600}
+  .bull{color:var(--green);font-weight:600}.bear{color:var(--red);font-weight:600}
+  .trade-card{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px;margin:8px 12px}
+  .trade-card:last-child{margin-bottom:12px}
+  .trade-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .trade-pair{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:14px}
+  .trade-pnl{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:16px}
+  .trade-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+  .trade-item{font-size:11px;color:var(--muted)}
+  .trade-item span{display:block;font-family:'JetBrains Mono',monospace;color:var(--text);font-size:12px}
+  .tp-bar{height:4px;background:var(--border);border-radius:2px;margin-top:8px;overflow:hidden}
+  .tp-fill{height:100%;border-radius:2px;transition:width .3s}
+  .scroll-body{max-height:350px;overflow-y:auto}
+  .scroll-body::-webkit-scrollbar{width:4px}
+  .scroll-body::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+  .empty{padding:30px;text-align:center;color:var(--muted);font-size:12px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:900px){.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">
+      <div class="logo-icon">⚡</div>
+      <div>
+        <div class="logo-name">{{ system_name }}</div>
+        <div class="logo-sub">BBMA X · Crypto Expert Engine</div>
+      </div>
+    </div>
+    <div class="status-badge">
+      <div class="dot" id="statusDot"></div>
+      <span id="statusText">Connecting…</span>
+    </div>
+  </header>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-label">P&L Keseluruhan</div>
+      <div class="stat-value" id="statPnl">–</div>
+      <div class="stat-sub" id="statWL">–</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Active Trades</div>
+      <div class="stat-value" style="color:var(--accent)" id="statActive">0</div>
+      <div class="stat-sub" id="statActivePairs">–</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Signals Today</div>
+      <div class="stat-value" style="color:var(--green)" id="statToday">0</div>
+      <div class="stat-sub">Generated 24h</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Last Scan</div>
+      <div class="stat-value" style="font-size:15px;padding-top:4px" id="statScan">–</div>
+      <div class="stat-sub" id="statPairsCount">–</div>
+    </div>
+  </div>
+
+  <!-- Active Trades -->
+  <div class="card" id="activeCard" style="display:none">
+    <div class="card-head">
+      <div class="card-title">🔥 Active Trades</div>
+      <button class="refresh-btn" onclick="loadTrades()">↺ Refresh</button>
+    </div>
+    <div class="card-body" id="activeBody"></div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title">📋 Recent Signals</div>
+        <button class="refresh-btn" onclick="loadSignals()">↺ Refresh</button>
+      </div>
+      <div class="card-body"><div class="scroll-body">
+        <table>
+          <thead><tr><th>Pair</th><th>Type</th><th>Entry</th><th>SL</th><th>Result</th></tr></thead>
+          <tbody id="signalBody"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+        </table>
+      </div></div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title">📊 Trend Monitor</div>
+        <button class="refresh-btn" onclick="loadPrices()">↺ Refresh</button>
+      </div>
+      <div class="card-body"><div class="scroll-body">
+        <table>
+          <thead><tr><th>Pair</th><th>Price</th><th>D1</th><th>H4</th><th>H1</th></tr></thead>
+          <tbody id="priceBody"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+        </table>
+      </div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+function fp(p){p=parseFloat(p)||0;if(p>=1000)return p.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});if(p>=1)return p.toFixed(4);if(p>=0.01)return p.toFixed(6);return p.toFixed(8)}
+function pn(s){const p=s.pair||((s.base_asset||'')+'USDT');if(!p||p==='USDT')return'???';return p.replace('USDT','')}
+function th(t){if(t==='BULLISH')return'<span class="bull">▲ BULL</span>';if(t==='BEARISH')return'<span class="bear">▼ BEAR</span>';return'<span style="color:var(--muted)">–</span>'}
+function dur(ts){if(!ts)return'–';const s=Math.floor(Date.now()/1000-ts);if(s<60)return s+'s';if(s<3600)return Math.floor(s/60)+'m';return Math.floor(s/3600)+'j '+Math.floor((s%3600)/60)+'m'}
+
+async function loadStatus(){
+  try{
+    const d=await(await fetch('/api/status')).json();
+    document.getElementById('statusText').textContent=d.status==='running'?'Running':d.status;
+    document.getElementById('statusDot').style.background=d.status==='running'?'var(--green)':'var(--yellow)';
+    document.getElementById('statToday').textContent=d.signals_today||'0';
+    document.getElementById('statActive').textContent=d.active_count||'0';
+    document.getElementById('statPairsCount').textContent=(d.pairs_total||416)+' pairs monitored';
+    if(d.last_scan){const dt=new Date(d.last_scan*1000);document.getElementById('statScan').textContent=dt.toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'})}
+  }catch(e){console.warn('status',e)}
+}
+
+async function loadTrades(){
+  try{
+    const d=await(await fetch('/api/trades')).json();
+    const card=document.getElementById('activeCard');
+    const body=document.getElementById('activeBody');
+    if(!d.length){card.style.display='none';document.getElementById('statActivePairs').textContent='–';return}
+    card.style.display='block';
+    document.getElementById('statActivePairs').textContent=d.map(t=>pn(t)).join(', ');
+    body.innerHTML=d.map(t=>{
+      const e=parseFloat(t.entry)||0,cp=parseFloat(t.current_price)||e;
+      const pnl=e>0?((cp-e)/e*100):0;
+      const col=pnl>=0?'var(--green)':'var(--red)';
+      const ps=(pnl>=0?'+':'')+pnl.toFixed(2)+'%';
+      const tp1=t.tp1_hit?'✅':'⏳',tp2=t.tp2_hit?'✅':'⏳';
+      let prog=0;if(t.tp2_hit)prog=80;else if(t.tp1_hit)prog=50;else if(cp>e&&parseFloat(t.tp1)>e)prog=Math.min(30,((cp-e)/(parseFloat(t.tp1)-e))*30);
+      return`<div class="trade-card">
+        <div class="trade-header">
+          <div><span class="trade-pair">${pn(t)}/USDT</span> <span class="badge buy">${t.timeframe||'–'}</span></div>
+          <div class="trade-pnl" style="color:${col}">${ps}</div>
+        </div>
+        <div class="trade-grid">
+          <div class="trade-item">Entry<span>${fp(t.entry)}</span></div>
+          <div class="trade-item">Now<span style="color:${col}">${fp(cp)}</span></div>
+          <div class="trade-item">Duration<span>${dur(t.ts)}</span></div>
+          <div class="trade-item">SL<span style="color:var(--red)">${fp(t.sl)}</span></div>
+          <div class="trade-item">TP1 ${tp1}<span>${fp(t.tp1)}</span></div>
+          <div class="trade-item">TP2 ${tp2}<span>${fp(t.tp2||0)}</span></div>
+        </div>
+        <div class="tp-bar"><div class="tp-fill" style="width:${prog}%;background:${col}"></div></div>
+      </div>`
+    }).join('');
+  }catch(e){console.warn('trades',e);document.getElementById('activeCard').style.display='none'}
+}
+
+async function loadSignals(){
+  const tb=document.getElementById('signalBody');
+  try{
+    const raw=await(await fetch('/api/signals')).json();
+    const arr=Array.isArray(raw)?raw:[];
+    if(!arr.length){tb.innerHTML='<tr><td colspan="5" class="empty">No signals yet</td></tr>';return}
+    tb.innerHTML=arr.slice(0,30).map(s=>{
+      const pair=pn(s),status=s.status||'ACTIVE',pnl=parseFloat(s.pnl_pct)||0;
+      const tf=s.timeframe||'–',type=(s.signal_type||'').replace('EXTREM_','').replace('_',' ');
+      let res;
+      if(status==='ACTIVE')res='<span class="badge-active">ACTIVE</span>';
+      else if(pnl>0)res=`<span class="badge-win">+${pnl.toFixed(1)}%</span>`;
+      else if(pnl<0)res=`<span class="badge-loss">${pnl.toFixed(1)}%</span>`;
+      else res='<span class="badge-be">BE</span>';
+      return`<tr>
+        <td><span class="mono" style="font-weight:600">${pair}</span><span style="color:var(--muted)">/U</span></td>
+        <td><span style="color:var(--muted);font-size:10px">${tf} ${type}</span></td>
+        <td class="mono">${fp(s.entry_price||0)}</td>
+        <td class="mono" style="color:var(--red)">${fp(s.sl_price||0)}</td>
+        <td>${res}</td>
+      </tr>`
+    }).join('');
+  }catch(e){console.warn('signals',e);tb.innerHTML='<tr><td colspan="5" class="empty">⚠ Cannot load</td></tr>'}
+}
+
+async function loadStats(){
+  try{
+    const d=await(await fetch('/api/stats')).json();
+    if(d.error)return;
+    const pnl=d.total_pnl||0,el=document.getElementById('statPnl');
+    el.textContent=(pnl>=0?'+':'')+pnl.toFixed(1)+'%';
+    el.style.color=pnl>=0?'var(--green)':'var(--red)';
+    const wr=d.win_rate||0;
+    document.getElementById('statWL').textContent=`${d.wins||0}W / ${d.losses||0}L · WR ${wr.toFixed(0)}%`;
+  }catch(e){console.warn('stats',e)}
+}
+
+async function loadPrices(){
+  try{
+    const arr=await(await fetch('/api/prices')).json();
+    const tb=document.getElementById('priceBody');
+    if(!arr.length){tb.innerHTML='<tr><td colspan="5" class="empty">No data</td></tr>';return}
+    tb.innerHTML=arr.map(p=>{
+      const n=p.pair?p.pair.replace('USDT',''):'?';
+      return`<tr>
+        <td><span class="mono" style="font-weight:600">${n}</span><span style="color:var(--muted)">/U</span></td>
+        <td class="mono" style="color:var(--accent)">${fp(p.price)}</td>
+        <td>${th(p.trend_daily)}</td><td>${th(p.trend_h4)}</td><td>${th(p.trend_h1)}</td>
+      </tr>`
+    }).join('');
+  }catch(e){console.warn('prices',e)}
+}
+
+async function tick(){await Promise.all([loadStatus(),loadTrades(),loadSignals(),loadStats(),loadPrices()])}
+tick();setInterval(tick,30000);
+</script>
+</body>
+</html>
