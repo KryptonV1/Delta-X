@@ -381,22 +381,28 @@ def _scan_entry(tf: str):
         # Build active trades with current prices for dashboard
         trades_data = []
         for sig_id, t in ACTIVE_TRADES.items():
+            cp    = PRICE_CACHE.get(t["pair"], 0)
+            entry = t["entry"]
+            trends_pair = TREND_CACHE.get(t["pair"], {})
             trades_data.append({
-                "signal_id": sig_id,
-                "pair": t["pair"],
-                "timeframe": t["timeframe"],
-                "direction": t.get("direction", "BUY"),
+                "signal_id":   sig_id,
+                "pair":        t["pair"],
+                "timeframe":   t["timeframe"],
+                "direction":   t.get("direction", "BUY"),
                 "signal_type": t.get("signal_type", ""),
-                "entry": t["entry"],
-                "tp1": t["tp1"],
-                "tp2": t.get("tp2", 0),
-                "tp3": t.get("tp3", 0),
-                "sl": t["sl"],
-                "sl_orig": t.get("sl_orig", t["sl"]),
-                "tp1_hit": t.get("tp1_hit", False),
-                "tp2_hit": t.get("tp2_hit", False),
-                "current_price": PRICE_CACHE.get(t["pair"], 0),
-                "ts": t.get("ts", 0),
+                "entry":       entry,
+                "tp1":         t["tp1"],
+                "tp2":         t.get("tp2", 0),
+                "tp3":         t.get("tp3", 0),
+                "sl":          t["sl"],
+                "sl_orig":     t.get("sl_orig", t["sl"]),
+                "tp1_hit":     t.get("tp1_hit", False),
+                "tp2_hit":     t.get("tp2_hit", False),
+                "current_price": cp,
+                "ts":          t.get("ts", 0),
+                "trend_d1":    trends_pair.get("1d", "NEUTRAL"),
+                "trend_h4":    trends_pair.get("4h", "NEUTRAL"),
+                "trend_h1":    trends_pair.get("1h", "NEUTRAL"),
             })
 
         update_state(
