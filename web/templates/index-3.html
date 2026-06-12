@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ system_name }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#060a14;--s1:#0d1220;--s2:#151d30;--s3:#1c2640;--brd:#1e2a42;
+--accent:#3b82f6;--green:#10b981;--red:#ef4444;--amber:#f59e0b;--purple:#8b5cf6;
+--text:#e2e8f0;--dim:#64748b;--faint:#334155}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;font-size:13px;-webkit-font-smoothing:antialiased}
+.m{font-family:'JetBrains Mono',monospace}
+.wrap{max-width:1200px;margin:0 auto;padding:12px}
+
+/* Header */
+header{display:flex;align-items:center;justify-content:space-between;padding:10px 0 16px;border-bottom:1px solid var(--brd);margin-bottom:14px}
+.brand{display:flex;align-items:center;gap:8px}
+.brand-icon{width:32px;height:32px;background:linear-gradient(135deg,var(--accent),var(--purple));border-radius:8px;display:grid;place-items:center;font-size:15px}
+.brand h1{font-size:16px;font-weight:700;letter-spacing:.3px}
+.brand span{font-size:9px;color:var(--dim);letter-spacing:1.5px;text-transform:uppercase;display:block;margin-top:1px}
+.live{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--dim)}
+.live::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--green);animation:p 2s infinite}
+@keyframes p{50%{opacity:.3}}
+
+/* Top stats */
+.kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+.kpi-card{background:var(--s1);border:1px solid var(--brd);border-radius:10px;padding:12px}
+.kpi-label{font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim)}
+.kpi-val{font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;margin:2px 0}
+.kpi-sub{font-size:10px;color:var(--dim)}
+@media(max-width:640px){.kpi{grid-template-columns:1fr 1fr}.kpi-val{font-size:18px}}
+
+/* Section */
+.sec{background:var(--s1);border:1px solid var(--brd);border-radius:12px;margin-bottom:12px;overflow:hidden}
+.sec-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--brd)}
+.sec-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.btn{background:none;border:1px solid var(--brd);color:var(--dim);border-radius:5px;padding:2px 8px;font-size:10px;cursor:pointer}
+.btn:hover{color:var(--text);background:var(--s2)}
+
+/* ═══ ACTIVE TRADE CARD (Risk Control + Execution) ═══ */
+.tc{background:var(--s2);border:1px solid var(--brd);border-radius:10px;margin:10px 12px;padding:14px;position:relative;overflow:hidden}
+.tc::before{content:'';position:absolute;top:0;left:0;width:3px;height:100%;border-radius:3px 0 0 3px}
+.tc.profit::before{background:var(--green)}.tc.loss::before{background:var(--red)}
+
+.tc-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px}
+.tc-pair{font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700}
+.tc-meta{display:flex;gap:4px;margin-top:3px}
+.tag{font-size:9px;padding:1px 6px;border-radius:3px;font-weight:500}
+.tag-tf{background:rgba(59,130,246,.15);color:var(--accent)}
+.tag-type{background:rgba(139,92,246,.15);color:var(--purple)}
+.tc-pnl{text-align:right}
+.tc-pnl-val{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700}
+.tc-pnl-label{font-size:9px;color:var(--dim)}
+
+/* Risk gauge — shows price position between SL and TP3 */
+.gauge{margin:8px 0;position:relative;height:28px}
+.gauge-track{position:absolute;top:12px;left:0;right:0;height:4px;background:var(--faint);border-radius:2px}
+.gauge-sl{position:absolute;top:12px;left:0;height:4px;background:var(--red);border-radius:2px 0 0 2px;opacity:.4}
+.gauge-tp{position:absolute;top:12px;right:0;height:4px;background:var(--green);border-radius:0 2px 2px 0;opacity:.4}
+.gauge-marker{position:absolute;top:6px;width:2px;height:16px;border-radius:1px}
+.gauge-entry{background:var(--dim)}
+.gauge-now{background:var(--text);width:3px;z-index:2;box-shadow:0 0 6px rgba(255,255,255,.3)}
+.gauge-label{position:absolute;top:0;font-size:8px;color:var(--dim);font-family:'JetBrains Mono',monospace;white-space:nowrap}
+
+/* Risk metrics grid */
+.risk{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}
+.risk-item{background:var(--s3);border-radius:6px;padding:7px 8px}
+.risk-item .lbl{font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim)}
+.risk-item .val{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;margin-top:1px}
+@media(max-width:640px){.risk{grid-template-columns:repeat(2,1fr)}}
+
+/* Confluence badges */
+.conf{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
+.conf-badge{font-size:9px;padding:2px 6px;border-radius:3px;display:flex;align-items:center;gap:3px}
+.conf-bull{background:rgba(16,185,129,.1);color:var(--green);border:1px solid rgba(16,185,129,.2)}
+.conf-bear{background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.2)}
+.conf-neut{background:rgba(100,116,139,.1);color:var(--dim);border:1px solid var(--faint)}
+
+/* ═══ JOURNAL ═══ */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:900px){.grid2{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse}
+th{font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);padding:7px 10px;text-align:left;border-bottom:1px solid var(--brd)}
+td{padding:7px 10px;border-bottom:1px solid var(--brd);font-size:11px}
+tr:last-child td{border-bottom:none}
+.scroll{max-height:320px;overflow-y:auto}
+.scroll::-webkit-scrollbar{width:3px}
+.scroll::-webkit-scrollbar-thumb{background:var(--brd);border-radius:2px}
+.empty{padding:24px;text-align:center;color:var(--dim);font-size:11px}
+.badge-w{color:var(--green);font-weight:600}.badge-l{color:var(--red);font-weight:600}
+.badge-a{color:var(--accent);font-weight:600}.badge-be{color:var(--amber);font-weight:600}
+.bull{color:var(--green)}.bear{color:var(--red)}
+
+/* Journal stat cards */
+.jstat{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:10px}
+.jstat-item{background:var(--s2);border-radius:8px;padding:8px;text-align:center}
+.jstat-item .lbl{font-size:8px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim)}
+.jstat-item .val{font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700;margin-top:2px}
+@media(max-width:640px){.jstat{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="brand">
+    <div class="brand-icon">⚡</div>
+    <div><h1>{{ system_name }}</h1><span>BBMA X · Crypto Expert Engine</span></div>
+  </div>
+  <div class="live" id="statusText">Connecting…</div>
+</header>
+
+<div class="kpi">
+  <div class="kpi-card"><div class="kpi-label">P&L Total</div><div class="kpi-val" id="kPnl">–</div><div class="kpi-sub" id="kWL">–</div></div>
+  <div class="kpi-card"><div class="kpi-label">Win Rate</div><div class="kpi-val" id="kWR">–</div><div class="kpi-sub" id="kWR2">–</div></div>
+  <div class="kpi-card"><div class="kpi-label">Active</div><div class="kpi-val" style="color:var(--accent)" id="kActive">0</div><div class="kpi-sub" id="kPairs">–</div></div>
+  <div class="kpi-card"><div class="kpi-label">Last Scan</div><div class="kpi-val" style="font-size:14px;padding-top:3px" id="kScan">–</div><div class="kpi-sub" id="kCount">–</div></div>
+</div>
+
+<!-- PILLAR 1+2: Active Trades — Risk Control + Execution -->
+<div class="sec" id="tradesSec" style="display:none">
+  <div class="sec-head"><div class="sec-title">🔥 Risk Control — Active Trades</div><button class="btn" onclick="loadTrades()">↺</button></div>
+  <div id="tradesBody"></div>
+</div>
+
+<div class="grid2">
+  <!-- PILLAR 3a: Journal — Recent -->
+  <div class="sec">
+    <div class="sec-head"><div class="sec-title">📋 Trade Journal</div><button class="btn" onclick="loadSignals()">↺</button></div>
+    <div class="scroll"><table><thead><tr><th>Pair</th><th>Setup</th><th>R:R</th><th>Result</th></tr></thead>
+    <tbody id="sigBody"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody></table></div>
+  </div>
+  <!-- PILLAR 3b: Journal — Stats -->
+  <div class="sec">
+    <div class="sec-head"><div class="sec-title">📊 Performance</div><button class="btn" onclick="loadStats()">↺</button></div>
+    <div class="jstat" id="perfStats">
+      <div class="jstat-item"><div class="lbl">Total</div><div class="val">–</div></div>
+      <div class="jstat-item"><div class="lbl">Avg Win</div><div class="val">–</div></div>
+      <div class="jstat-item"><div class="lbl">Avg Loss</div><div class="val">–</div></div>
+      <div class="jstat-item"><div class="lbl">Best</div><div class="val">–</div></div>
+    </div>
+    <div class="scroll"><table><thead><tr><th>Pair</th><th>Price</th><th>D1</th><th>H4</th></tr></thead>
+    <tbody id="trendBody"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody></table></div>
+  </div>
+</div>
+
+</div>
+<script>
+const fp=p=>{p=parseFloat(p)||0;if(p>=100)return p.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});if(p>=1)return p.toFixed(4);if(p>=.01)return p.toFixed(6);return p.toFixed(8)};
+const pn=s=>{const p=s.pair||((s.base_asset||'')+'USDT');return(!p||p==='USDT')?'???':p.replace('USDT','')};
+const pct=(a,b)=>b>0?((a-b)/b*100):0;
+const dur=ts=>{if(!ts)return'–';const s=Math.floor(Date.now()/1000-ts);if(s<60)return s+'s';if(s<3600)return Math.floor(s/60)+'m';return Math.floor(s/3600)+'j '+Math.floor((s%3600)/60)+'m'};
+const cBadge=(t,l)=>{if(t==='BULLISH')return`<span class="conf-badge conf-bull">▲ ${l}</span>`;if(t==='BEARISH')return`<span class="conf-badge conf-bear">▼ ${l}</span>`;return`<span class="conf-badge conf-neut">– ${l}</span>`};
+
+// ═══ STATUS ═══
+async function loadStatus(){try{
+  const d=await(await fetch('/api/status')).json();
+  document.getElementById('statusText').textContent=d.status==='running'?'● Running':'● '+d.status;
+  document.getElementById('kActive').textContent=d.active_count||'0';
+  document.getElementById('kCount').textContent=(d.pairs_total||416)+' pairs · '+(d.signals_today||0)+' signals today';
+  if(d.last_scan){const dt=new Date(d.last_scan*1000);document.getElementById('kScan').textContent=dt.toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'})}
+}catch(e){}}
+
+// ═══ ACTIVE TRADES (Pillar 1+2: Risk + Execution) ═══
+async function loadTrades(){try{
+  const d=await(await fetch('/api/trades')).json();
+  const sec=document.getElementById('tradesSec'),body=document.getElementById('tradesBody');
+  if(!d.length){sec.style.display='none';document.getElementById('kPairs').textContent='No active';return}
+  sec.style.display='block';
+  document.getElementById('kPairs').textContent=d.map(t=>pn(t)).join(', ');
+
+  body.innerHTML=d.map(t=>{
+    const e=parseFloat(t.entry)||0, cp=parseFloat(t.current_price)||e;
+    const sl=parseFloat(t.sl)||0, tp1=parseFloat(t.tp1)||0, tp2=parseFloat(t.tp2)||0, tp3=parseFloat(t.tp3)||0;
+    const curPnl=pct(cp,e), slDist=pct(sl,cp), tp1Dist=pct(tp1,cp), tp2Dist=pct(tp2,cp), tp3Dist=pct(tp3,cp);
+    const isProfit=curPnl>=0;
+    const col=isProfit?'var(--green)':'var(--red)';
+
+    // R:R live = potential reward / current risk
+    const riskFromHere=Math.abs(pct(sl,cp));
+    const rewardToTp=t.tp1_hit?Math.abs(pct(tp3,cp)):Math.abs(pct(tp1,cp));
+    const rr=riskFromHere>0?(rewardToTp/riskFromHere).toFixed(1):'–';
+
+    // P&L velocity
+    const elapsed=(Date.now()/1000-(t.ts||Date.now()/1000))/3600;
+    const velocity=elapsed>0?(curPnl/elapsed).toFixed(2):'0';
+
+    // Gauge position (0%=SL, 100%=TP3)
+    const range=tp3-sl;
+    const entryPos=range>0?((e-sl)/range*100):50;
+    const nowPos=range>0?((cp-sl)/range*100):50;
+    const clamp=v=>Math.max(2,Math.min(98,v));
+
+    // Next target
+    const nextTp=t.tp2_hit?'TP3':t.tp1_hit?'TP2':'TP1';
+    const nextVal=t.tp2_hit?tp3:t.tp1_hit?tp2:tp1;
+    const nextDist=pct(nextVal,cp);
+
+    return`<div class="tc ${isProfit?'profit':'loss'}">
+      <div class="tc-top">
+        <div>
+          <div class="tc-pair">${pn(t)}/USDT</div>
+          <div class="tc-meta">
+            <span class="tag tag-tf">${t.timeframe||'H1'}</span>
+            <span class="tag tag-type">${(t.signal_type||'').replace('_',' ')}</span>
+          </div>
+        </div>
+        <div class="tc-pnl">
+          <div class="tc-pnl-val" style="color:${col}">${curPnl>=0?'+':''}${curPnl.toFixed(2)}%</div>
+          <div class="tc-pnl-label">${dur(t.ts)} · ${velocity}%/h</div>
+        </div>
+      </div>
+
+      <div class="gauge">
+        <div class="gauge-track"></div>
+        <div class="gauge-sl" style="width:${clamp(entryPos)}%"></div>
+        <div class="gauge-tp" style="width:${100-clamp(entryPos)}%"></div>
+        <div class="gauge-marker gauge-entry" style="left:${clamp(entryPos)}%"></div>
+        <div class="gauge-marker gauge-now" style="left:${clamp(nowPos)}%"></div>
+        <span class="gauge-label" style="left:0">SL</span>
+        <span class="gauge-label" style="left:${clamp(entryPos)}%;transform:translateX(-50%)">Entry</span>
+        <span class="gauge-label" style="right:0">${nextTp}</span>
+      </div>
+
+      <div class="risk">
+        <div class="risk-item"><div class="lbl">🛑 SL Distance</div><div class="val" style="color:var(--red)">${slDist.toFixed(2)}%</div></div>
+        <div class="risk-item"><div class="lbl">🎯 ${nextTp} Distance</div><div class="val" style="color:var(--green)">${nextDist>=0?'+':''}${nextDist.toFixed(2)}%</div></div>
+        <div class="risk-item"><div class="lbl">⚖️ Live R:R</div><div class="val">1:${rr}</div></div>
+        <div class="risk-item"><div class="lbl">Entry</div><div class="val m">${fp(e)}</div></div>
+        <div class="risk-item"><div class="lbl">Now</div><div class="val m" style="color:${col}">${fp(cp)}</div></div>
+        <div class="risk-item"><div class="lbl">TP Progress</div><div class="val">${t.tp1_hit?'✅':'⏳'}1 ${t.tp2_hit?'✅':'⏳'}2 ⏳3</div></div>
+      </div>
+
+      <div class="conf">
+        ${cBadge(t.trend_d1||'NEUTRAL','D1')}
+        ${cBadge(t.trend_h4||'NEUTRAL','H4')}
+        ${cBadge(t.trend_h1||'NEUTRAL','H1')}
+        <span class="conf-badge" style="background:rgba(139,92,246,.1);color:var(--purple);border:1px solid rgba(139,92,246,.2)">${(t.signal_type||'BBMA').replace('_',' ')}</span>
+      </div>
+    </div>`;
+  }).join('');
+}catch(e){console.warn('trades',e)}}
+
+// ═══ JOURNAL SIGNALS ═══
+async function loadSignals(){try{
+  const raw=await(await fetch('/api/signals')).json();
+  const arr=Array.isArray(raw)?raw:[];
+  const tb=document.getElementById('sigBody');
+  if(!arr.length){tb.innerHTML='<tr><td colspan="4" class="empty">No trades yet</td></tr>';return}
+  tb.innerHTML=arr.slice(0,30).map(s=>{
+    const st=s.status||'ACTIVE',pnl=parseFloat(s.pnl_pct)||0;
+    const slp=Math.abs(parseFloat(s.sl_pct)||0),tp1p=Math.abs(parseFloat(s.tp1_pct)||0);
+    const rr=slp>0?(tp1p/slp).toFixed(1):'–';
+    let res;
+    if(st==='ACTIVE')res='<span class="badge-a">ACTIVE</span>';
+    else if(pnl>0)res=`<span class="badge-w">+${pnl.toFixed(1)}%</span>`;
+    else if(pnl<0)res=`<span class="badge-l">${pnl.toFixed(1)}%</span>`;
+    else res='<span class="badge-be">BE</span>';
+    const type=(s.signal_type||'').replace('EXTREM_','').replace('_',' ');
+    return`<tr>
+      <td><span class="m" style="font-weight:600;font-size:11px">${pn(s)}</span></td>
+      <td><span style="color:var(--dim);font-size:10px">${s.timeframe||'–'} ${type}</span></td>
+      <td class="m" style="font-size:10px">1:${rr}</td>
+      <td>${res}</td>
+    </tr>`;
+  }).join('');
+}catch(e){document.getElementById('sigBody').innerHTML='<tr><td colspan="4" class="empty">⚠ Error</td></tr>'}}
+
+// ═══ PERFORMANCE STATS ═══
+async function loadStats(){try{
+  const d=await(await fetch('/api/stats')).json();
+  if(d.error)return;
+  const el=document.getElementById('kPnl'),pnl=d.total_pnl||0;
+  el.textContent=(pnl>=0?'+':'')+pnl.toFixed(1)+'%';
+  el.style.color=pnl>=0?'var(--green)':'var(--red)';
+  document.getElementById('kWL').textContent=`${d.wins||0}W / ${d.losses||0}L`;
+  const wr=d.win_rate||0;
+  document.getElementById('kWR').textContent=wr.toFixed(0)+'%';
+  document.getElementById('kWR').style.color=wr>=50?'var(--green)':'var(--red)';
+  document.getElementById('kWR2').textContent=`${d.total_closed||0} closed`;
+
+  const ps=document.getElementById('perfStats');
+  const emhv=d.by_type?.EXTREM_MHV||{count:0,win_rate:0};
+  const csm=d.by_type?.CSM_REENTRY||{count:0,win_rate:0};
+  ps.innerHTML=`
+    <div class="jstat-item"><div class="lbl">Avg Win</div><div class="val" style="color:var(--green)">${d.avg_win>=0?'+':''}${(d.avg_win||0).toFixed(1)}%</div></div>
+    <div class="jstat-item"><div class="lbl">Avg Loss</div><div class="val" style="color:var(--red)">${(d.avg_loss||0).toFixed(1)}%</div></div>
+    <div class="jstat-item"><div class="lbl">MHV WR</div><div class="val">${emhv.count}t · ${emhv.win_rate}%</div></div>
+    <div class="jstat-item"><div class="lbl">CSM WR</div><div class="val">${csm.count}t · ${csm.win_rate}%</div></div>`;
+}catch(e){}}
+
+// ═══ TREND MONITOR ═══
+async function loadPrices(){try{
+  const arr=await(await fetch('/api/prices')).json();
+  const tb=document.getElementById('trendBody');
+  if(!arr.length){tb.innerHTML='<tr><td colspan="4" class="empty">No data</td></tr>';return}
+  tb.innerHTML=arr.map(p=>{
+    const n=p.pair?p.pair.replace('USDT',''):'?';
+    const t=v=>v==='BULLISH'?'<span class="bull">▲</span>':v==='BEARISH'?'<span class="bear">▼</span>':'<span style="color:var(--dim)">–</span>';
+    return`<tr><td><span class="m" style="font-weight:600;font-size:11px">${n}</span></td>
+    <td class="m" style="color:var(--accent);font-size:11px">${fp(p.price)}</td>
+    <td>${t(p.trend_daily)}</td><td>${t(p.trend_h4)}</td></tr>`;
+  }).join('');
+}catch(e){}}
+
+async function tick(){await Promise.all([loadStatus(),loadTrades(),loadSignals(),loadStats(),loadPrices()])}
+tick();setInterval(tick,30000);
+</script>
+</body>
+</html>
