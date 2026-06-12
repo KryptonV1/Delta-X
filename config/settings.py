@@ -48,15 +48,18 @@ MA10_PERIOD  = 10
 MA50_PERIOD  = 50
 CANDLE_LIMIT = 120
 
-# ── Risk Management ──────────────────────────────────────────────────────────
-MAX_LOSS_PERCENT  = 20.0
-SL_BUFFER         = 0.01               # 1% buffer below ref candle (swing room)
+# ── Risk Management (min SL/TP1 = 2%, RR mampan) ─────────────────────────────
+MAX_LOSS_PERCENT  = 6.0                # SL maksimum 6% (swing H1/H4)
+SL_BUFFER         = 0.01               # 1% buffer bawah ref candle
+MIN_SL_PCT        = 2.0                # SL minimum 2% (ruang bernafas BBMA)
+MIN_TP1_PCT       = 2.0                # TP1 minimum 2% (cover fees + berbaloi)
+MIN_RR            = 0.5                # TP1 ≥ 50% drpd SL (mampan dgn trail TP2/3)
 
 # ── Advanced Filters (NEW) ───────────────────────────────────────────────────
 TREND_FILTER_ENABLED = True          # Filter signal lawan trend D1
 COOLDOWN_SECONDS = 14400             # 4 jam cooldown per pair (H4 candle cycle)
 REQUIRE_CONFIRMATION = False         # Tunggu confirmation candle
-MIN_BB_WIDTH_PERCENT = 0.02          # Min BB width (elak ranging market)
+MIN_BB_WIDTH_PERCENT = 0.045         # Min BB width 4.5% — pastikan TP1 (mid BB) ≥ 2%
 CONFIRMATION_CANDLES = 2             # Bilangan candle untuk confirm trend
 NEAR_ENTRY_THRESHOLD = 0.02          # 2% threshold untuk near-entry warning
 
